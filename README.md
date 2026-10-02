@@ -1,223 +1,308 @@
-# Regroupeur Cardmarket
+# Cardmarket Regroupeur
 
-Extension Chrome / Edge / Brave qui cherche, pour une liste de cartes, **la
-combinaison de vendeurs Cardmarket la moins chère frais de port compris**, et
-celle qui demande **le moins de commandes**.
+Extension navigateur pour Cardmarket qui aide à construire le meilleur plan d'achat pour une liste de cartes, en minimisant à la fois :
 
-Elle ne cherche pas seulement le vendeur le moins cher carte par carte. Payer une
-carte 0,20 € de plus chez un vendeur qui a déjà le reste de ta liste revient
-souvent moins cher qu'un colis de plus.
+- le coût total avec frais de port ;
+- le nombre de commandes ;
+- le temps de recherche et de vérification.
 
-## Installation (mode développeur)
+L'idée centrale est simple : il ne suffit pas d'acheter chaque carte chez le vendeur le moins cher. Parfois, payer un peu plus sur une carte permet de regrouper le reste de la liste chez le même vendeur et de faire baisser les frais de port globaux.
 
-1. Ouvrir `chrome://extensions` (ou `edge://extensions`).
-2. Activer le **mode développeur**.
-3. **Charger l'extension non empaquetée** et choisir ce dossier (celui qui contient `manifest.json`).
-4. Aller sur [cardmarket.com](https://www.cardmarket.com/fr/Pokemon) : un bouton
-   **Regroupeur** apparaît en bas à droite. L'icône de l'extension ouvre et ferme aussi le panneau.
+---
 
-Après une modification du code, cliquer ↻ sur la carte de l'extension, puis recharger l'onglet Cardmarket.
+## Sommaire
 
-## Utilisation
+- [Présentation](#présentation)
+- [Fonctionnalités clés](#fonctionnalités-clés)
+- [Prérequis](#prérequis)
+- [Installation](#installation)
+- [Utilisation rapide](#utilisation-rapide)
+- [Réglages et stratégie d'achat](#réglages-et-stratégie-dachat)
+- [Développement](#développement)
+- [Tests](#tests)
+- [Structure du projet](#structure-du-projet)
+- [Contribuer](#contribuer)
 
-**1. Ajouter les cartes à acheter** (onglet *1 · Mes cartes*)
+---
 
-- Taper le nom d'une carte dans **Ajouter une carte ou un coffret** puis **Chercher**, et cliquer
-  **+ Ajouter** sur la bonne version (ou **+ PSA** pour la vouloir gradée).
-- Pour un produit scellé, choisir **Coffrets, ETB, tins**, **Displays** ou *Autres… → Boosters /
-  Lots* avant de chercher.
-- Ou, sur la page d'une carte Cardmarket, cliquer **+ Ajouter cette carte** (en bas à droite).
-- Ou importer une wants list (bouton **Importer** sur la page de la wants list).
-- **Coller une liste** (dans le champ de recherche ou dans *Coller une liste de cartes*), une carte par
-  ligne. Le format le plus fiable est **numéro — nom** :
+## Présentation
 
-  ```
-  065 — Tokotoro
-  080 — Hyporoi-ex
-  2x 085 — Pêchaminus-ex
-  Houndoom (SFA 066)        ← format des noms Cardmarket, code d'extension compris
-  ```
+Cardmarket Regroupeur est une extension Chrome / Edge / Brave destinée aux collectionneurs qui achètent souvent plusieurs cartes en une seule liste. Elle analyse les offres disponibles, compare les vendeurs, puis propose les meilleures combinaisons de commande en fonction de :
 
-  L'extension est reconnue toute seule : 2 ou 3 noms sont cherchés, et l'extension qui a la bonne carte
-  au bon numéro l'emporte. La liste complète de l'extension est ensuite lue (100 cartes par page) et
-  chaque ligne est associée **par son numéro**. Les cartes au même nom (Pêchaminus-ex en 085, 093,
-  095…) ne sont donc jamais confondues. Un aperçu « 065 Tokotoro → carte trouvée » permet de vérifier
-  avant d'ajouter. Une liste de 35 cartes coûte ainsi 3 à 5 pages au lieu de 35. Si l'extension n'est
-  pas reconnue, on la choisit dans la liste. Avec le code d'extension (« (SFA 066) »), une seule
-  recherche suffit par extension, et une liste qui mélange plusieurs extensions est traitée extension
-  par extension. Les lignes sans numéro sont cherchées une par une ; au-delà de 8, l'extension demande
-  ton accord avant de lancer les recherches. `Nom | Numéro | Extension | Langue | État | Qté` reste
-  possible.
+- condition et langue recherchées ;
+- prix max autorisé ;
+- frais de port estimés et réels ;
+- nombre de commandes à éviter ;
+- cartes gradées ou non gradées ;
+- coffrets, boosters, ETB, displays et lots.
 
-Par défaut, l'extension cherche des cartes **loose** (non gradées) en français, Near Mint ou mieux
-(bouton **Réglages**). La quantité se règle avec **− / +** sur chaque ligne ; **Modifier** donne
-accès à la langue, au type (loose / gradée, société de gradation, note minimum), à l'état,
-à la version (normale ou reverse/foil) et au prix max.
+Le but n'est pas seulement de trouver le plus bas prix unitaire, mais le meilleur plan d'achat global.
 
-**2. Cliquer « Trouver les vendeurs »** : l'extension lit les offres de chaque carte, puis
-interroge le stock des vendeurs les plus prometteurs sur les cartes qu'ils
-n'affichaient pas parmi les moins chères (*vérification approfondie*).
+---
 
-**3. Lire les résultats**
+## Fonctionnalités clés
 
-| Bloc | Contenu |
+- Analyse automatique d'une liste de cartes depuis Cardmarket
+- Recherche du meilleur regroupement de vendeurs selon le coût final
+- Prise en compte des frais de port et des pénalités par commande
+- Comparaison de plusieurs scénarios :
+  - moins de colis ;
+  - prix unitaire minimal ;
+  - meilleur compromis global
+- Support des cartes gradées (PSA, BGS, CGC, etc.)
+- Gestion des produits scellés : boosters, lots, ETB, displays, coffrets
+- Import de listes, collage de listes, ajout depuis une fiche produit
+- Export CSV du plan d'achat
+- Plusieurs listes de collection sauvegardées
+- Vérification approfondie du stock des vendeurs les plus prometteurs
+- Compatibilité avec les pages de cartes, vendeurs et panier Cardmarket
+
+---
+
+## Prérequis
+
+Pour utiliser l'extension :
+
+- un navigateur compatible : Chrome, Edge ou Brave ;
+- un compte Cardmarket connecté ;
+- l'extension chargée en mode développeur.
+
+Pour développer ou générer les artefacts du projet :
+
+- Node.js 18+ ;
+- npm ;
+- Git.
+
+---
+
+## Installation
+
+### 1) Cloner le dépôt
+
+```bash
+git clone git@github.com:Lioxyze/Cardmarket-Regroupeur.git
+cd Cardmarket-Regroupeur
+```
+
+### 2) Installer les dépendances
+
+```bash
+npm install
+```
+
+### 3) Charger l'extension dans le navigateur
+
+1. Ouvrir `chrome://extensions` (ou `edge://extensions` / `brave://extensions`)
+2. Activer le mode développeur
+3. Cliquer sur "Charger l'extension non empaquetée"
+4. Sélectionner le dossier du projet, celui qui contient `manifest.json`
+5. Ouvrir un site Cardmarket et utiliser le panneau de l'extension
+
+### 4) Recharger après modification
+
+Après un changement de code, il suffit de :
+
+- recharger la carte de l'extension dans la page des extensions ;
+- puis recharger la page Cardmarket concernée.
+
+---
+
+## Utilisation rapide
+
+### Ajouter des cartes
+
+Plusieurs méthodes sont possibles :
+
+- recherche manuelle dans l'onglet "Mes cartes" ;
+- ajout depuis une fiche produit Cardmarket ;
+- import d'une wants list ;
+- collage d'une liste de cartes, exemple :
+
+```text
+065 — Tokotoro
+080 — Hyporoi-ex
+2x 085 — Pêchaminus-ex
+Houndoom (SFA 066)
+```
+
+Le système tente de reconnaître automatiquement l'extension, le numéro et le nom de la carte pour limiter les erreurs de matching.
+
+### Lancer la recherche
+
+Une fois la liste remplie :
+
+1. choisir les critères souhaités ;
+2. choisir l'état recherché ;
+3. choisir la langue ;
+4. lancer la recherche de vendeurs ;
+5. consulter les meilleures combinaisons.
+
+### Lire les résultats
+
+L'interface affiche généralement :
+
+- la meilleure option globale ;
+- les meilleures combinaisons par nombre de vendeurs ;
+- les vendeurs pertinents ;
+- un détail par carte ;
+- le coût total avec port ;
+- les différences de prix entre scénarios.
+
+### Ajouter au panier
+
+L'extension peut ouvrir les offres retenues et relancer l'ajout au panier sur Cardmarket. Il ne s'agit pas d'un achat automatique : l'utilisateur vérifie le panier avant finalisation.
+
+---
+
+## Réglages et stratégie d'achat
+
+### États et langues
+
+Les réglages permettent d'affiner fortement la recherche :
+
+- état minimum : NM, EX ou mieux, GD ou mieux ;
+- langues : FR / JP / EN / toutes ;
+- prix max ;
+- tolérance de surcoût pour regrouper les achats ;
+- exclusions de vendeurs ;
+- pénalité par commande ;
+- frais de port estimés ou réels.
+
+Les règles peuvent être ajustées "à la volée" sans relire toutes les pages déjà chargées, selon le contexte de calcul.
+
+### Stratégie de regroupement
+
+L'extension ne cherche pas seulement la carte la moins chère. Elle regarde si le coût total final est meilleur quand :
+
+- une carte est légèrement plus chère chez un vendeur déjà pertinent ;
+- les frais de port sont réduits grâce à un packaging plus dense ;
+- la commande est consolidée chez moins de vendeurs.
+
+Cela permet souvent d'obtenir un plan plus rentable que le simple "prix unitaire minimum".
+
+---
+
+## Développement
+
+### Scripts disponibles
+
+```bash
+npm test
+npm run ui-check
+npm run icons
+npm run zip
+npm run store-assets
+npm run publier
+```
+
+Description des scripts :
+
+| Script | Description |
 | --- | --- |
-| Le meilleur choix | La réponse en une phrase (« Commande chez 2 vendeurs », total port compris, économie), avec la liste des cartes à prendre chez chaque vendeur, et les boutons **Tout ajouter au panier** / **Ajouter ces cartes au panier** (par vendeur). |
-| Autres options | *Encore moins de colis* (si ça coûte un peu plus) et la référence *chaque carte au moins cher*. **Copier** met une liste d'achat dans le presse-papiers. |
-| Combinaisons | Meilleures combinaisons de 1, 2 ou 3 vendeurs : cartes couvertes, manquantes, prix des cartes, port, total. |
-| Vendeurs | Tous les vendeurs trouvés, triables et filtrables (pays, type, nombre de cartes) : cartes couvertes, manquantes, prix, **score de pertinence** (70 % couverture de la liste, 30 % compétitivité prix). Un vendeur peut être exclu d'un clic. |
-| Détail par carte | Offres retenues, prix mini, tendance, et raisons des offres écartées. |
+| `npm test` | Lance la suite de tests automatisés du projet |
+| `npm run ui-check` | Vérifie les éléments de l'interface et certains points de cohérence |
+| `npm run icons` | Génère les icônes de l'extension |
+| `npm run zip` | Prépare une archive prête à distribuer |
+| `npm run store-assets` | Génère les ressources nécessaires au dépôt de mise en ligne |
+| `npm run publier` | Script de publication / packaging |
 
-Les réglages « côté client » (prix max, ventes minimum, exclusions, frais de port,
-pénalité par commande) recalculent les résultats **instantanément**, sans relire Cardmarket.
+### Procédure de travail
 
-## Les réglages qui font le prix
+- développer en gardant le comportement de Cardmarket en tête ;
+- tester les changements sur des cas réels ou représentatifs ;
+- valider le comportement avant publication ;
+- éviter d'introduire de nouvelles requêtes inutiles sur le site.
 
-En haut de ta liste et des résultats, trois choix en un clic :
+---
 
-- **État** : `NM`, `EX ou mieux`, `GD ou mieux`. EX ou GD font baisser les prix ; le NM reste
-  pris quand il est moins cher.
-- **Langues** : français et japonais par défaut (anglais ou toutes en un clic).
-- **Prix** : *Toujours le moins cher* (aucun surcoût) ou *Regrouper (+10 % max)*.
+## Tests
 
-Changer l'état ou les langues demande de relancer la recherche : les pages déjà lues ne
-contiennent que les offres des anciens critères. Un bouton **Relancer la recherche** apparaît.
+Le dépôt contient une suite de tests unitaires et de validation autour des principaux modules :
 
-## Prix : toujours proches du moins cher
+```bash
+npm test
+```
 
-Pour regrouper, l'extension accepte de payer une carte un peu plus que la moins chère,
-mais **jamais plus de +10 % (ou +0,30 € pour les petites cartes)** au-dessus de la moins
-chère qui respecte tes critères (état, langue…). Chaque ligne du plan affiche son écart
-(« +0,06 € ») ou « min » si c'est le prix le plus bas. Le bouton **Toujours le moins cher**
-supprime tout surcoût ; le réglage est dans *Réglages → Surcoût max pour regrouper*.
+Les tests couvrent notamment :
 
-En haut des résultats, *Prix basés sur* rappelle les filtres qui fixent les prix. **Français
-uniquement** coûte souvent bien plus cher que **Toutes langues** : un clic suffit à changer,
-puis on relance la recherche.
+- l'analyse des offres ;
+- la gestion des listes ;
+- les calculs d'optimisation ;
+- le parcours des cartes gradées ;
+- les frais de port premium ;
+- le comportement global des requêtes et des filtres.
 
-## Ajout au panier
+---
 
-Il faut être **connecté à Cardmarket**. Rien n'est acheté : les articles vont dans ton panier,
-tu vérifies et tu paies toi-même.
+## Structure du projet
 
-Pour chaque carte, l'extension ouvre la page où se trouve l'offre retenue (stock du vendeur,
-sinon page de la carte) et rejoue le formulaire « ajouter au panier » que Cardmarket affiche
-dans la ligne de l'offre. Si l'offre a été vendue entre-temps, elle prend chez le même vendeur
-une offre équivalente (mêmes critères, au plus 25 % plus chère), sinon elle le signale. À la
-fin, elle relit ton panier pour confirmer que chaque article y est.
+```text
+.
+├── src/
+│   ├── analyzer.js
+│   ├── cart.js
+│   ├── cm.js
+│   ├── content.js
+│   ├── fetcher.js
+│   ├── optimizer.js
+│   ├── panel.css
+│   ├── panel.js
+│   └── storage.js
+├── scripts/
+│   ├── build-zip.js
+│   ├── make-icons.js
+│   ├── publier.js
+│   ├── store-assets.js
+│   └── ui-check.js
+├── tests/
+│   ├── fixtures/
+│   ├── harness/
+│   └── *.test.js
+├── distribution/
+├── icons/
+├── store/
+├── background.js
+├── manifest.json
+├── package.json
+├── README.md
+└── .gitignore
+```
 
-En cas d'échec, **Copier le diagnostic** copie un résumé anonymisé (sans ton jeton de
-session) à me renvoyer pour corriger.
+### Composants principaux
 
-## Frais de port réels
+- `src/cm.js` : interactions avec les pages Cardmarket
+- `src/fetcher.js` : récupération et parsing des offres
+- `src/optimizer.js` : calcul de la meilleure combinaison de vendeurs
+- `src/analyzer.js` : logique d'analyse de données et de sélection
+- `src/panel.js` : interface utilisateur de l'extension
+- `background.js` : gestion du background de l'extension
 
-Après un ajout au panier, l'extension relit la page panier de Cardmarket, prend les frais de
-port réellement affichés pour chaque vendeur et en fait une moyenne par pays d'expédition
-(lettre / suivi). Ces moyennes remplacent l'estimation aux calculs suivants (*Réglages → Frais
-vus au panier*, bouton **Oublier** pour revenir aux estimations). Un montant illisible ou
-aberrant (hors 0,30 € – 15 €) est ignoré.
+---
 
-## Repères sur les pages Cardmarket
+## Contribuer
 
-Sans aucune requête (à partir des derniers résultats) :
+Les contributions sont les bienvenues. Avant de proposer une modification :
 
-- sur la page d'une carte, les vendeurs de ton plan sont marqués **★ ton plan**, ceux qui ont
-  plusieurs cartes de ta liste **« 12 cartes de ta liste »** ;
-- dans le stock d'un vendeur, les cartes de ta liste sont marquées **✓ dans ta liste** ;
-- sur la page d'un vendeur, le bouton en bas à droite indique combien de tes cartes il a.
+1. créer une branche dédiée ;
+2. faire un correctif ou une amélioration ciblée ;
+3. lancer la suite de tests ;
+4. vérifier que le comportement Cardmarket reste cohérent ;
+5. ouvrir une pull request claire avec un résumé de la modification.
 
-## Plusieurs listes, export, annulation
+Un bon correctif est toujours :
 
-- **Listes** : menu *Liste* en haut de *Mes cartes* (« ＋ Nouvelle liste… », Renommer,
-  Supprimer). Chaque liste garde ses cartes et ses derniers résultats.
-- **Exporter (CSV)** : le plan d'achat pour un tableur (vendeur, carte, état, prix, moins
-  chère, port, total).
-- Retirer une carte ou vider la liste propose **Annuler** pendant quelques secondes.
+- lisible ;
+- testable ;
+- aligné avec les objectifs du projet ;
+- respectueux des contraintes du site Cardmarket.
 
-## Tester sur le vrai Cardmarket
+---
 
-*Réglages → Tester sur Cardmarket* vérifie en environ 5 pages ce qui dépend du site :
-- recherche en français ;
-- lecture des offres, y compris qu'elles sont bien triées du moins cher au plus cher ;
-- bouton panier, sans rien ajouter ;
-- stock d'un vendeur ;
-- liste d'une extension ;
-- lecture du port au panier.
+## À retenir
 
-**Copier le rapport** donne un texte anonymisé à envoyer pour corriger ce qui ne passe pas.
+Cardmarket Regroupeur est conçu pour transformer une simple liste d'achats en plan d'achat optimisé, avec une logique orientée vers le coût total réel, et non seulement le prix d'une carte isolée.
 
-## Loose ou gradée (PSA…)
-
-Cardmarket n'a pas de case « carte gradée » : les vendeurs l'écrivent dans leur commentaire.
-L'extension lit ce commentaire (« PSA 10 », « psa10 gem mint », « CGC 9.5 », « BGS 9,5 »,
-« slab »…) et ignore les annonces du type « PSA ready », « candidate PSA 10 », « parfaite pour
-grading » ou « non gradée », qui sont des cartes loose.
-
-- **Loose** (par défaut) : les cartes gradées sont écartées.
-- **Gradée** : seules les gradées sont gardées, avec au besoin la société (PSA, BGS, CGC…) et
-  la note minimum. L'état n'est pas filtré (une carte gradée peut être déclarée dans n'importe
-  quel état), et l'extension lit jusqu'à 300 offres, car les gradées arrivent loin derrière les
-  loose dans un classement par prix.
-
-## Coffrets et produits scellés
-
-Les coffrets, ETB, displays, boosters et lots s'ajoutent comme les cartes, et peuvent être
-mélangés aux cartes dans une même liste. Pour eux, seuls la langue, le prix max et la quantité
-comptent. La vérification approfondie (stock des vendeurs) ne concerne que les cartes à l'unité.
-
-## Nombre de requêtes
-
-L'extension lit Cardmarket comme une personne le ferait, en restant sobre :
-
-- **une seule page à la fois pour tout l'onglet** (recherche, analyse et panier passent par la
-  même file), avec **3 s minimum** entre deux pages (réglable, jamais moins de 2 s) ;
-- si Cardmarket répond « trop de requêtes », pause (30 s, 1 min, 2 min…) puis rythme ralenti jusqu'au
-  rechargement de la page ;
-- **1 page (50 offres) par carte** par défaut. La vérification approfondie est plafonnée à
-  4 vendeurs et 20 pages ;
-- **plafond de 120 pages par analyse** (réglable) : au-delà, l'analyse s'arrête proprement avec des
-  résultats partiels ;
-- cache d'une heure : relancer ou changer un réglage ne relit pas les pages déjà vues ;
-- l'estimation du nombre de pages s'affiche avant de lancer (« 35 cartes · ≈ 50 pages ·
-  environ 4 min »).
-
-## Frais de port
-
-Cardmarket ne publie pas de barème exploitable par vendeur. L'extension utilise une
-**estimation par commande en 3 paliers**, selon sa valeur :
-
-| Commande | Même pays | Autre pays |
-| --- | --- | --- |
-| moins de 25 € (lettre) | 1,60 € | 2,20 € |
-| 25 à 100 € (suivi) | 3,50 € | 5,50 € |
-| 100 € et plus (recommandé / assuré) | 7,00 € | 12,00 € |
-
-Tout est réglable. Dès qu'un ajout au panier a eu lieu, le **port réel** lu sur Cardmarket
-remplace ces estimations (voir plus bas). Après l'ajout, le bloc *Panier Cardmarket* compare
-le panier réel des vendeurs du plan (cartes + port) à l'estimation. Il signale aussi les
-articles en trop (doublons, reste d'un ancien panier) et les autres vendeurs déjà présents
-dans ton panier.
-
-La **pénalité par commande** est une préférence : à 1 €, une commande supplémentaire
-doit faire gagner plus d'1 € (en plus du port) pour être retenue. Elle n'est jamais
-ajoutée aux totaux affichés.
-
-## Comment ça marche
-
-- **Lecture** (`src/cm.js`, `src/fetcher.js`) : les pages sont lues depuis l'onglet
-  Cardmarket, avec ta session, **une par une** (2,5 s entre deux pages par défaut,
-  pause automatique si le site demande de ralentir). Pages lues en anglais pour des
-  libellés stables, liens affichés dans ta langue. Filtres envoyés dans l'URL
-  (`language`, `minCondition`, `sellerCountry`, `sellerType`, `isReverseHolo`…),
-  puis revérifiés offre par offre, car Cardmarket ignore silencieusement un filtre inconnu.
-  Cache d'une heure : relancer après une interruption ne relit pas les cartes déjà vues.
-- **Optimisation** (`src/optimizer.js`) : c'est un problème de localisation
-  d'entrepôts (chaque vendeur retenu coûte son port). Il est résolu par glouton puis
-  recherche locale (ajout / retrait / échange de vendeurs) à partir de plusieurs
-  départs. Sur 200 cas aléatoires, le résultat est identique à la recherche exhaustive.
-  Les combinaisons à 1 ou 2 vendeurs sont énumérées exactement.
-- **Quantités** : un vendeur ne « couvre » une carte que s'il en a assez d'exemplaires
-  (en cumulant ses offres, des moins chères aux plus chères).
+Si tu veux acheter intelligemment sur Cardmarket, cette extension est pensée pour faire gagner du temps, réduire les colis et maximiser l'intérêt de chaque commande.
 
 ## Limites connues
 
@@ -302,7 +387,10 @@ npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du
 
 Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.js`
 et testés sur les pages de `tests/fixtures/` : enregistrer une page à jour et relancer `npm test`.
-#   C a r d m a r k e t - R e g r o u p e u r  
- #   C a r d m a r k e t - R e g r o u p e u r  
- #   C a r d m a r k e t - R e g r o u p e u r  
+#   C a r d m a r k e t - R e g r o u p e u r 
+ 
+ #   C a r d m a r k e t - R e g r o u p e u r 
+ 
+ #   C a r d m a r k e t - R e g r o u p e u r 
+ 
  
