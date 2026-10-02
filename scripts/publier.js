@@ -6,7 +6,7 @@
  *
  * Le PC de ton collègue verra la nouvelle version au plus tard 3 heures après (ou à sa prochaine session).
  * Options : --no-push (prépare le commit sans l'envoyer), --skip-tests.
- * Configuration : diffusion.json { "repo": "pseudo/regroupeur-cardmarket", "dossier": "../Cardmarket-Regroupeur-diffusion" }
+ * Configuration : diffusion.json { "repo": "pseudo/regroupeur-cardmarket", "dossier": "../Cardmarket-Regroupeur-diffusion", "branche": "main" }
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,7 +29,7 @@ const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
 if (!/^[\w.-]+\/[\w.-]+$/.test(cfg.repo || '')) fail('diffusion.json : "repo" doit ressembler à "pseudo/regroupeur-cardmarket".');
 const dir = path.resolve(ROOT, cfg.dossier || '../Cardmarket-Regroupeur-diffusion');
 if (!fs.existsSync(path.join(dir, '.git'))) fail(`Dossier de diffusion introuvable ou sans git : ${dir}`);
-const base = cfg.baseUrl || `https://raw.githubusercontent.com/${cfg.repo}/main`;
+const base = cfg.baseUrl || `https://raw.githubusercontent.com/${cfg.repo}/${cfg.branche || 'main'}`;
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 const version = manifest.version;
@@ -45,7 +45,8 @@ if (fs.existsSync(published)) {
   if (!newer(version, current)) fail(`La version ${version} n'est pas plus récente que celle déjà publiée (${current}) : augmente "version" dans manifest.json.`);
 }
 
-const run = (cmd, argv, cwd) => execFileSync(cmd, argv, { cwd: cwd || ROOT, stdio: 'inherit', shell: process.platform === 'win32' });
+// Le shell (nécessaire pour npm.cmd sous Windows) découperait les notes au premier espace : réservé à npm.
+const run = (cmd, argv, cwd) => execFileSync(cmd, argv, { cwd: cwd || ROOT, stdio: 'inherit', shell: process.platform === 'win32' && cmd === 'npm' });
 
 // 1. Tests et paquet
 if (!flag('--skip-tests')) run('npm', ['test']);
@@ -88,5 +89,5 @@ if (flag('--no-push')) {
 }
 run('git', ['add', '-A'], dir);
 run('git', ['commit', '-m', `Version ${version}${notes ? ' : ' + notes : ''}`], dir);
-run('git', ['push'], dir);
+run('git', ['push', '-u', 'origin', 'HEAD'], dir);
 console.log(`\nPubliée : https://github.com/${cfg.repo} — les PC équipés la recevront d'ici 3 heures.`);

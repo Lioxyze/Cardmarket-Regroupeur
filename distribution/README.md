@@ -13,7 +13,7 @@ Version actuelle : **__VERSION__**
    powershell -ep bypass -c "iwr -useb https://raw.githubusercontent.com/__REPO__/main/installer.ps1 -OutFile $env:TEMP\ri.ps1; & $env:TEMP\ri.ps1"
    ```
 
-   *Ou* : clic droit sur **[Installer-Regroupeur.cmd](https://github.com/__REPO__/raw/main/Installer-Regroupeur.cmd)**
+   *Ou* : clic droit sur **[Installer-Regroupeur.cmd](https://raw.githubusercontent.com/__REPO__/main/Installer-Regroupeur.cmd)**
    → « Enregistrer le lien sous… », puis double-clique sur le fichier. Si Windows affiche « Windows a protégé votre
    ordinateur », clique **Informations complémentaires → Exécuter quand même**.
 

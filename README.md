@@ -362,6 +362,28 @@ Hors Chrome Web Store, Chrome sous Windows ou Mac n'accepte aucun fichier d'inst
 mode développeur est la seule voie gratuite. Le code JavaScript reste lisible dans tout paquet d'extension ; seuls
 le dépôt, l'historique et les outils de test restent privés.
 
+## Diffusion avec mises à jour automatiques (GitHub)
+
+Les versions prêtes à l'emploi sont publiées sur la branche
+[`diffusion`](https://github.com/Lioxyze/Cardmarket-Regroupeur/tree/diffusion) de ce dépôt : zip, `version.json`
+(version + empreinte SHA-256) et scripts d'installation. Configuration : `diffusion.json`.
+
+**Chez la personne (une fois)** : Windows + R, puis coller la ligne indiquée dans le README de la branche
+`diffusion`. L'installateur met l'extension dans `%LOCALAPPDATA%\Regroupeur-pour-Cardmarket\extension` et crée une
+tâche planifiée (sans droits administrateur) qui vérifie les nouvelles versions toutes les 3 heures et à
+l'ouverture de session. Reste à la charger une fois dans `chrome://extensions` (mode développeur).
+
+**Publier une version** :
+
+1. augmenter `"version"` dans `manifest.json` ;
+2. `npm run publier -- "Ce qui change"` : tests, paquet, `version.json`, commit et envoi sur la branche `diffusion`
+   (dossier de travail `../Cardmarket-Regroupeur-diffusion`, créé avec
+   `git worktree add ../Cardmarket-Regroupeur-diffusion diffusion`).
+
+Le PC équipé télécharge la nouvelle version, vérifie l'empreinte et remplace les fichiers ; le Regroupeur affiche
+alors « Mise à jour prête → Activer maintenant » (sinon elle s'active au prochain démarrage de Chrome). Journal :
+`%LOCALAPPDATA%\Regroupeur-pour-Cardmarket\mise-a-jour.log`.
+
 ## Développement
 
 ```bash
@@ -370,12 +392,14 @@ npm test           # optimiseur, parseurs (vraies pages enregistrées), analyse
 npm run ui-check   # parcours complet dans Chrome sans fenêtre, sur un faux Cardmarket (captures dans tests/screenshots)
 npm run icons      # régénère les icônes
 npm run zip        # dist/ : paquet à donner (avec LISEZ-MOI) + paquet pour les stores
+npm run publier -- "notes"  # publie une nouvelle version sur la branche diffusion (mises à jour automatiques)
 npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du store
 ```
 
 | Fichier | Rôle |
 | --- | --- |
-| `manifest.json`, `background.js` | Déclaration de l'extension, clic sur l'icône |
+| `manifest.json`, `background.js` | Déclaration de l'extension, clic sur l'icône, détection des mises à jour |
+| `distribution/`, `scripts/publier.js` | Installateur Windows, programme de mise à jour, publication sur la branche `diffusion` |
 | `src/cm.js` | Identifiants Cardmarket (langues, états, pays), URL, lecture des pages |
 | `src/fetcher.js` | File de requêtes : délai, pauses 429, détection Cloudflare |
 | `src/storage.js` | Liste, réglages, cache (`chrome.storage.local`) |
@@ -387,4 +411,3 @@ npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du
 
 Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.js`
 et testés sur les pages de `tests/fixtures/` : enregistrer une page à jour et relancer `npm test`.
-#

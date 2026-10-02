@@ -118,8 +118,8 @@ const directEntries = entries.map((e) => (e.name === 'manifest.json' ? { name: e
 const diffusionPath = path.join(ROOT, 'diffusion.json');
 if (fs.existsSync(diffusionPath)) {
   const cfg = JSON.parse(fs.readFileSync(diffusionPath, 'utf8'));
-  const base = cfg.baseUrl || `https://raw.githubusercontent.com/${cfg.repo}/main`;
-  const info = { versionUrl: `${base}/version.json`, page: `https://github.com/${cfg.repo}` };
+  const base = cfg.baseUrl || `https://raw.githubusercontent.com/${cfg.repo}/${cfg.branche || 'main'}`;
+  const info = { versionUrl: `${base}/version.json`, page: `https://github.com/${cfg.repo}/tree/${cfg.branche || 'main'}` };
   directEntries.push({ name: 'distribution.json', data: Buffer.from(JSON.stringify(info, null, 2) + '\n') });
 }
 const readme = fs.readFileSync(path.join(ROOT, 'store', 'LISEZ-MOI.txt'), 'utf8').replace(/\r?\n/g, '\r\n');
