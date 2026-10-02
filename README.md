@@ -304,4 +304,5 @@ Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.
 et testés sur les pages de `tests/fixtures/` : enregistrer une page à jour et relancer `npm test`.
 #   C a r d m a r k e t - R e g r o u p e u r  
  #   C a r d m a r k e t - R e g r o u p e u r  
+ #   C a r d m a r k e t - R e g r o u p e u r  
  
