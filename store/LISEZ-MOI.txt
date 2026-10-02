@@ -1,0 +1,28 @@
+REGROUPEUR POUR CARDMARKET — installation (gratuite, 2 minutes)
+=================================================================
+
+1. Décompresse ce zip et place le dossier « Regroupeur-pour-Cardmarket » à un endroit
+   où il restera, par exemple dans « Documents ». Ne le supprime pas : Chrome l'utilise.
+
+2. Dans Chrome, ouvre l'adresse :   chrome://extensions
+
+3. En haut à droite, active « Mode développeur ».
+
+4. Clique « Charger l'extension non empaquetée » et choisis le dossier
+   « Regroupeur-pour-Cardmarket » (celui qui contient manifest.json).
+
+5. Va sur https://www.cardmarket.com : le bouton « Regroupeur » apparaît en bas à droite.
+   Astuce : épingle l'extension (icône puzzle en haut de Chrome → punaise).
+
+À SAVOIR
+- Laisse le « Mode développeur » activé : sinon Chrome désactive l'extension.
+- Il faut être connecté à Cardmarket pour ajouter des cartes au panier.
+  Rien n'est jamais acheté : tu vérifies et tu paies toi-même.
+
+METTRE À JOUR
+1. Remplace le contenu du dossier « Regroupeur-pour-Cardmarket » par celui du nouveau zip.
+2. Dans chrome://extensions, clique ↻ sur « Regroupeur pour Cardmarket » (ou redémarre Chrome).
+Tes listes et réglages sont conservés, même si tu as déplacé le dossier.
+
+DÉSINSTALLER
+chrome://extensions → « Supprimer » sur l'extension, puis supprime le dossier.

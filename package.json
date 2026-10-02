@@ -1,0 +1,19 @@
+{
+  "name": "cardmarket-regroupeur",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Extension navigateur : regrouper ses achats Cardmarket chez le moins de vendeurs possible.",
+  "scripts": {
+    "test": "node --test tests/optimizer.test.js tests/cm.test.js tests/analyzer.test.js tests/cart-graded.test.js tests/list-requests.test.js tests/shipping-premium.test.js",
+    "ui-check": "node scripts/ui-check.js",
+    "icons": "node scripts/make-icons.js",
+    "zip": "node scripts/build-zip.js",
+    "store-assets": "node scripts/store-assets.js",
+    "publier": "node scripts/publier.js"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "linkedom": "^0.18.13",
+    "puppeteer-core": "^25.12.0"
+  }
+}
