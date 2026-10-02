@@ -1,0 +1,3 @@
+*.zip binary
+*.ps1 -text
+*.cmd -text
