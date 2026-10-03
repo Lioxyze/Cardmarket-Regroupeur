@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Regroupeur — Cardmarket &amp; Vinted</title>
+    <link rel="icon" href="../icons/icon-32.png" />
+    <style>
+      :root {
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --ink: #1b2130;
+        --ink-2: #5b6475;
+        --line: #dde1e8;
+        --accent: #1f4fd1;
+        --accent-ink: #ffffff;
+        --vinted: #007782;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #12151c;
+          --card: #1f2430;
+          --ink: #e8ebf1;
+          --ink-2: #a9b1c1;
+          --line: #333a4a;
+          --accent: #7d9bff;
+          --accent-ink: #0d1222;
+          --vinted: #4cc3cd;
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 40px 16px 56px;
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.55 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      main {
+        max-width: 860px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 8px;
+      }
+      header img {
+        width: 48px;
+        height: 48px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.2;
+        text-wrap: balance;
+      }
+      .lead {
+        margin: 0 0 28px;
+        color: var(--ink-2);
+        max-width: 62ch;
+      }
+      .sites {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 16px;
+      }
+      section {
+        display: flex;
+        flex-direction: column;
+        padding: 20px 22px 22px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+      }
+      h2 {
+        margin: 0 0 4px;
+        font-size: 19px;
+      }
+      .where {
+        margin: 0 0 12px;
+        color: var(--ink-2);
+        font-size: 13px;
+      }
+      ul {
+        margin: 0 0 18px;
+        padding-left: 18px;
+        flex: 1;
+      }
+      li {
+        margin: 6px 0;
+      }
+      a.go {
+        align-self: flex-start;
+        padding: 10px 16px;
+        border-radius: 9px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a.go.vinted {
+        background: var(--vinted);
+        color: #fff;
+      }
+      a.go:focus-visible {
+        outline: 3px solid var(--ink);
+        outline-offset: 2px;
+      }
+      footer {
+        margin-top: 26px;
+        color: var(--ink-2);
+        font-size: 13px;
+        max-width: 70ch;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="../icons/icon-128.png" alt="" />
+        <h1>Regroupeur — Cardmarket &amp; Vinted</h1>
+      </header>
+      <p class="lead">
+        L’extension fonctionne directement sur les deux sites : ouvre l’un d’eux, elle s’y ajoute toute seule. Un clic sur son icône ouvre ou ferme son panneau.
+      </p>
+
+      <div class="sites">
+        <section>
+          <h2>Sur Cardmarket</h2>
+          <p class="where">Bouton « Regroupeur » en bas à droite de chaque page.</p>
+          <ul>
+            <li>Tu donnes ta liste de cartes (collée, importée ou ajoutée depuis une fiche).</li>
+            <li>Elle trouve les vendeurs qui en ont le plus : moins de commandes, moins de frais de port.</li>
+            <li>Elle compare les plans (moins de colis, moins cher, meilleur compromis) et ajoute les cartes choisies au panier.</li>
+          </ul>
+          <a class="go" href="https://www.cardmarket.com/fr/Pokemon">Ouvrir Cardmarket</a>
+        </section>
+
+        <section>
+          <h2>Sur Vinted</h2>
+          <p class="where">Barre « Chercher une carte dans ce dressing » au-dessus des annonces d’un vendeur.</p>
+          <ul>
+            <li>Recherche dans tout le dressing d’un vendeur, même s’il a des centaines d’annonces.</li>
+            <li>Les cartes cochées ouvrent la page « Créer un lot » déjà remplie.</li>
+            <li>Sous chaque annonce : son nom et le prix avec l’envoi, y compris sur la page d’accueil.</li>
+            <li>Dans la messagerie : suppression d’une conversation ou de plusieurs à la fois.</li>
+          </ul>
+          <a class="go vinted" href="https://www.vinted.fr/">Ouvrir Vinted</a>
+        </section>
+      </div>
+
+      <footer>
+        Extension indépendante, non affiliée à Cardmarket ni à Vinted. Elle n’achète jamais rien et n’envoie aucune donnée : tout reste dans ton navigateur.
+      </footer>
+    </main>
+  </body>
+</html>

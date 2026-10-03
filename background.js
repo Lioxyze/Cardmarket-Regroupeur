@@ -20,7 +20,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     }
     return;
   }
-  await chrome.tabs.create({ url: 'https://www.cardmarket.com/fr/Pokemon' });
+  // Ailleurs : une page qui explique ce que fait l'extension sur chacun des deux sites.
+  await chrome.tabs.create({ url: chrome.runtime.getURL('src/accueil.html') });
 });
 
 // ---------- Mises à jour (version distribuée hors store) ----------

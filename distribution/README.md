@@ -1,4 +1,4 @@
-# Regroupeur pour Cardmarket
+# Regroupeur — Cardmarket & Vinted
 
 Extension Chrome pour acheter des cartes plus simplement :
 

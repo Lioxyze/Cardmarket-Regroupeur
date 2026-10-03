@@ -23,7 +23,7 @@ REGROUPEUR POUR CARDMARKET — installation (gratuite, 2 minutes)
 
 METTRE À JOUR
 1. Remplace le contenu du dossier « Regroupeur-pour-Cardmarket » par celui du nouveau zip.
-2. Dans chrome://extensions, clique ↻ sur « Regroupeur pour Cardmarket » (ou redémarre Chrome).
+2. Dans chrome://extensions, clique ↻ sur « Regroupeur — Cardmarket & Vinted » (ou redémarre Chrome).
 Tes listes et réglages sont conservés, même si tu as déplacé le dossier.
 
 DÉSINSTALLER

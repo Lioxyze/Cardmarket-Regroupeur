@@ -1,4 +1,4 @@
-# Fiche Chrome Web Store — Regroupeur pour Cardmarket
+# Fiche Chrome Web Store — Regroupeur — Cardmarket & Vinted
 
 Textes prêts à copier-coller dans le tableau de bord développeur
 (https://chrome.google.com/webstore/devconsole), onglet par onglet.
@@ -9,7 +9,7 @@ Fichier à envoyer : `dist/store/regroupeur-1.0.0.zip` (`npm run zip` le régén
 
 ## Onglet « Fiche du Chrome Web Store »
 
-**Nom** (repris du manifeste) : Regroupeur pour Cardmarket
+**Nom** (repris du manifeste) : Regroupeur — Cardmarket & Vinted
 
 **Résumé** (132 caractères max, repris du manifeste) :
 Trouve les vendeurs Cardmarket qui ont le plus de cartes de ta liste : moins de commandes, moins de port. Non officiel.

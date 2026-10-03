@@ -22,8 +22,8 @@ function Step([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor 
 
 try {
   Write-Host ''
-  Write-Host '  Regroupeur pour Cardmarket - installation' -ForegroundColor White
-  Write-Host '  -----------------------------------------'
+  Write-Host '  Regroupeur (Cardmarket et Vinted) - installation' -ForegroundColor White
+  Write-Host '  ------------------------------------------------'
 
   Step '1/3  Telechargement de l''extension...'
   New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null

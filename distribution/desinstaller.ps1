@@ -15,5 +15,5 @@ if (Test-Path $InstallDir) { Write-Host "Ferme Chrome puis supprime ce dossier a
 else { Write-Host 'Fichiers supprimes.' }
 
 Write-Host ''
-Write-Host 'Derniere etape : dans chrome://extensions, clique « Supprimer » sur Regroupeur pour Cardmarket.'
+Write-Host 'Derniere etape : dans chrome://extensions, clique « Supprimer » sur le Regroupeur (Cardmarket et Vinted).'
 if (-not $NoPause) { Read-Host 'Appuie sur Entree pour fermer' | Out-Null }

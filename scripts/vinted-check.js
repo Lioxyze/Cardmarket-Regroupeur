@@ -85,7 +85,57 @@ const PAGE_JS = `
 `;
 const CSS = 'body{font-family:sans-serif;margin:0;padding:16px 440px 90px 16px}.feed-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}img{width:100%;height:150px;background:#dde}a{display:none}p{margin:2px 0}.foot{position:fixed;left:0;right:0;bottom:0;padding:14px;background:#fff;border-top:1px solid #ccc;display:flex;justify-content:space-between}';
 
+// Fausse messagerie : même parcours que Vinted (conversation → détails → « Supprimer la conversation » → confirmation).
+// La conversation 103 n'a pas d'action « Supprimer » (commande en cours) ; la ligne « promo » n'est pas une conversation.
+const INBOX_JS = `
+  const $ = (s) => document.querySelector(s);
+  const pane = $('#pane');
+  let current = null;
+  function row(id) {
+    const c = document.createElement('div');
+    c.setAttribute('data-testid', 'inbox-list-item-' + id + '-container');
+    c.innerHTML = '<div role="button" data-testid="inbox-list-item-' + id + '" style="padding:14px;border-bottom:1px solid #ddd">Conversation ' + id + '</div>';
+    c.firstChild.onclick = () => { current = id; history.pushState({}, '', '/inbox/' + id); window.opened = (window.opened || 0) + 1;
+      pane.innerHTML = '<div data-testid="conversation-header"><button data-testid="details-button">i</button></div>';
+      $('[data-testid="details-button"]').onclick = details; };
+    return c;
+  }
+  function details() {
+    history.pushState({}, '', '/inbox/' + current + '/details');
+    pane.innerHTML = current === '103' ? '<div data-testid="conversation-actions-block">Bloquer</div>'
+      : '<div role="button" data-testid="conversation-actions-delete">Supprimer la conversation</div>';
+    const del = $('[data-testid="conversation-actions-delete"]');
+    if (del) del.onclick = () => {
+      const d = document.createElement('div');
+      d.setAttribute('role', 'dialog');
+      d.innerHTML = '<button data-testid="confirm-delete-conversation">Oui, supprimer</button><button>Non, annuler</button>';
+      document.body.appendChild(d);
+      d.firstChild.onclick = () => { $('[data-testid="inbox-list-item-' + current + '-container"]').remove(); d.remove(); pane.innerHTML = ''; history.pushState({}, '', '/inbox'); window.deleted = (window.deleted || []).concat(current); };
+    };
+  }
+  const list = $('#list');
+  const promo = row('UHJvbW8=');
+  list.appendChild(promo);
+  for (const id of ['101', '102', '103', '104', '105']) list.appendChild(row(id));
+`;
+
 function fakePage(url) {
+  if (url.pathname === '/') {
+    const cards = SELLERS[777].slice(0, 12).map((it) => {
+      const alt = `${it.title}, marque: Pokémon, état: ${it.status}, ${it.price.amount} €, ${it.total_item_price.amount} € Protection acheteurs incluse`;
+      const total = it.total_item_price.amount.replace('.', ',');
+      return `<div data-testid="grid-item" class="cell"><div data-testid="feed-item"><div data-testid="feed-item--image"><img alt="${alt}" width="150" height="200" src="/img/${it.id}.png"></div>
+        <a href="/items/${it.id}-carte?homepage_session_id=abc" data-testid="feed-item--overlay-link" title="${alt}"></a>
+        <div data-testid="feed-item--summary"><p data-testid="feed-item--description-subtitle">${it.status}</p>
+        <div><div data-testid="feed-item--title-container"><p data-testid="feed-item--price-text">${it.price.amount.replace('.', ',')} €</p></div>
+        <div data-testid="feed-item--breakdown"><span data-testid="total-combined-price">${total} €</span> incl.</div></div></div></div></div>`;
+    });
+    return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Faux Vinted</title><style>${CSS}</style></head><body><h1>Accueil</h1><div class="feed-grid">${cards.join('')}</div></body></html>`;
+  }
+  if (/^\/inbox(\/|$)/.test(url.pathname)) {
+    return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Messages</title></head><body style="font-family:sans-serif;display:flex;gap:24px">
+      <div style="width:360px"><h2>Messages</h2><div id="list"></div></div><div id="pane"></div><script>${INBOX_JS}</script></body></html>`;
+  }
   const m = url.pathname.match(/^\/member\/(\d+)(\/bundles\/new)?$/);
   if (m && SELLERS[m[1]]) {
     const bundle = !!m[2];
@@ -278,7 +328,58 @@ async function main() {
     const total = await page.evaluate(() => document.querySelector('[data-cmrv-total]').textContent);
     ok(/10,29\s€ avec envoi \(à partir de 4,35\s€\)/.test(total), total);
 
-    console.log('10. Réglages');
+    console.log('10. Page d’accueil : prix avec envoi sur les annonces du fil');
+    const before = hits.shipping;
+    await page.goto(`${SITE}/`);
+    await hostReady();
+    ok(await waitFor(() => page.evaluate(() => [...document.querySelectorAll('[data-cmrv-label]')].filter((l) => /avec envoi/.test(l.textContent)).length >= 10), 12000), 'les annonces visibles ont leur ligne « avec envoi »');
+    const home = await page.evaluate(() => document.querySelector('[data-cmrv-label]').innerText);
+    ok(/4,58\s€ avec envoi/.test(home) && /Carapuce/.test(home), `première annonce : ${home.replace(/\n/g, ' | ')}`);
+    ok(hits.shipping - before <= 12, `${hits.shipping - before} lectures pour ${await page.evaluate(() => document.querySelectorAll('[data-testid="feed-item"]').length)} annonces`);
+
+    console.log('11. Barre de recherche intégrée à la page du dressing');
+    await page.goto(`${SITE}/member/777`);
+    await hostReady();
+    ok(await waitFor(() => page.evaluate(() => {
+      const bar = document.querySelector('[data-cmrv-bar]');
+      return !!bar && bar.nextElementSibling === document.querySelector('.feed-grid');
+    })), 'barre « Chercher une carte dans ce dressing… » juste au-dessus des annonces');
+    await inPanel((sh) => sh.querySelector('.panel').hidden || sh.querySelector('[data-act="toggle"].x').click());
+    await page.evaluate(() => document.querySelector('[data-cmrv-bar]').click());
+    ok(await waitFor(() => inPanel((sh) => !sh.querySelector('.panel').hidden)), 'un clic ouvre la recherche');
+    await shot('barre');
+
+    console.log('12. Messagerie : supprimer une conversation');
+    await page.goto(`${SITE}/inbox`);
+    await hostReady();
+    const dels = () => page.evaluate(() => [...document.querySelectorAll('[data-cmrv-act="del"]')].map((b) => b.dataset.id + ':' + b.textContent));
+    ok(await waitFor(async () => (await dels()).length === 5), `un bouton par conversation, aucun sur le message promotionnel : ${(await dels()).join(' ')}`);
+    const ibar = () => page.evaluate(() => (document.querySelector('[data-cmrv-ibar]') || {}).innerText || '');
+    const press = (sel) => page.evaluate((s) => document.querySelector(s).click(), sel);
+    await press('[data-cmrv-act="del"][data-id="102"]');
+    await sleep(300);
+    ok((await dels()).includes('102:Supprimer ?') && (await page.evaluate(() => location.pathname + '|' + (window.opened || 0) + '|' + (window.deleted || []).length)) === '/inbox|0|0', 'premier clic : demande de confirmation, rien n’est ouvert ni supprimé');
+    await press('[data-cmrv-act="del"][data-id="102"]');
+    ok(await waitFor(() => page.evaluate(() => (window.deleted || []).join() === '102')), 'second clic : la conversation 102 est supprimée par le parcours de Vinted');
+    ok(await waitFor(async () => /1 conversation supprimée/.test(await ibar())), (await ibar()).replace(/\n/g, ' | '));
+
+    console.log('13. Messagerie : supprimer plusieurs conversations');
+    await press('[data-cmrv-act="select"]');
+    await press('[data-cmrv-act="del"][data-id="101"]');
+    await press('[data-cmrv-act="del"][data-id="103"]');
+    await press('[data-cmrv-act="del"][data-id="104"]');
+    await sleep(300);
+    ok(/3 cochées/.test(await ibar()) && /Supprimer \(3\)/.test(await ibar()), (await ibar()).replace(/\n/g, ' | '));
+    await press('[data-cmrv-act="delsel"]');
+    await sleep(300);
+    ok(/Confirmer : supprimer 3 conversations/.test(await ibar()) && (await page.evaluate(() => (window.deleted || []).length)) === 1, 'une confirmation est demandée avant toute suppression');
+    await shot('messages');
+    await press('[data-cmrv-act="delsel"]');
+    ok(await waitFor(async () => /2 conversations supprimées · 1 non supprimée/.test(await ibar()), 40000), (await ibar()).replace(/\n/g, ' | '));
+    ok((await page.evaluate(() => (window.deleted || []).join())) === '102,101,104', 'supprimées : 101 et 104 ; la 103 (sans action « Supprimer ») est laissée');
+    ok((await page.evaluate(() => !!document.querySelector('[data-testid="inbox-list-item-105"]') && !!document.querySelector('[data-testid="inbox-list-item-UHJvbW8="]'))), 'les conversations non cochées sont intactes');
+
+    console.log('14. Réglages');
     await page.goto(`${SITE}/member/777`);
     await hostReady();
     await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length >= 20));
@@ -289,7 +390,7 @@ async function main() {
       }
     });
     ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length === 0)), 'affichages retirés quand les deux options sont décochées');
-    ok(hits.shipping <= 8, `${hits.shipping} lectures de frais d’envoi sur tout le parcours`);
+    ok(hits.shipping <= 22, `${hits.shipping} lectures de frais d’envoi sur tout le parcours`);
 
     ok(errors.length === 0, errors.length ? errors.join('\n') : 'aucune erreur dans la console');
   } finally {

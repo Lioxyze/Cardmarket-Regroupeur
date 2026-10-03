@@ -311,9 +311,22 @@
 
     // ---------- Vignettes d'annonces de la page ----------
 
-    const cardEls = () => [...doc.querySelectorAll('[data-testid^="product-item-id-"]')].filter((el) => /^product-item-id-\d+$/.test(el.getAttribute('data-testid')));
-    const cardId = (el) => el.getAttribute('data-testid').slice('product-item-id-'.length);
-    const cardEl = (id) => doc.querySelector(`[data-testid="product-item-id-${id}"]`);
+    // Deux formats : « product-item-id-123 » (dressing, recherche, lot) et « feed-item » (page d'accueil).
+    // Dans les deux, le lien « …--overlay-link » porte l'identifiant de l'annonce.
+    const LINK = 'a[data-testid$="--overlay-link"]';
+    const linkId = (a) => ((a && a.getAttribute('href')) || '').match(/\/items\/(\d+)/);
+    const cardId = (el) => {
+      const m = linkId(el.querySelector(LINK)) || (el.getAttribute('data-testid') || '').match(/^product-item-id-(\d+)$/);
+      return m ? m[1] : null;
+    };
+    const cardOf = (a) => a.closest(`[data-testid="${a.getAttribute('data-testid').slice(0, -'--overlay-link'.length)}"]`);
+    const cardEls = () => [...doc.querySelectorAll(LINK)].filter(linkId).map(cardOf).filter(Boolean);
+    const cardEl = (id) => {
+      const el = doc.querySelector(`[data-testid="product-item-id-${id}"]`);
+      if (el) return el;
+      const a = [...doc.querySelectorAll(`${LINK}[href^="/items/${id}"]`)].find((x) => linkId(x)[1] === String(id));
+      return a ? cardOf(a) : null;
+    };
     const cardBox = (el) => el.closest('[data-testid="grid-item"]') || el;
 
     function cardInfo(el) {
@@ -468,7 +481,6 @@
       const on = S.settings.titles || S.settings.shipping;
       // Page d'un lot : l'envoi n'est payé qu'une fois, il est compté dans l'estimation du panneau.
       const showShip = S.settings.shipping && S.ctx.kind !== 'bundle';
-      const autoShip = showShip && S.ctx.kind !== 'home';
       for (const el of cardEls()) {
         let lab = el.querySelector('[data-cmrv-label]');
         if (!on) {
@@ -477,7 +489,7 @@
         }
         const card = cardInfo(el);
         const info = showShip ? shipFor(card.id) : null;
-        if (autoShip && !info && visible(el)) wantShip(card.id);
+        if (showShip && !info && visible(el)) wantShip(card.id);
         const line = shipLine(card, info);
         const key = `${S.settings.titles ? card.title : ''}|${line ? line.text : ''}`;
         if (lab && lab.dataset.k === key) continue;
@@ -884,6 +896,206 @@
       }
     });
 
+    // ---------- Éléments ajoutés dans la page de Vinted (hors panneau) ----------
+
+    const PAGE_CSS = `
+      .cmrv-bar{display:flex;align-items:center;gap:10px;width:100%;margin:0 0 16px;padding:12px 16px;border:1px solid #007782;border-radius:8px;background:transparent;color:inherit;font:inherit;font-size:16px;text-align:left;cursor:pointer}
+      .cmrv-bar:hover{background:rgba(0,119,130,.08)}
+      .cmrv-bar span:nth-child(2){flex:1;opacity:.7}
+      .cmrv-bar b{font-size:12px;color:#007782;white-space:nowrap}
+      .cmrv-ibar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 12px;font-size:13px;border-bottom:1px solid rgba(128,128,128,.25)}
+      .cmrv-ibar b{color:#007782}
+      .cmrv-ibar span{flex:1;min-width:0;opacity:.8}
+      .cmrv-btn{padding:4px 10px;border:1px solid rgba(128,128,128,.5);border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:12px;line-height:1.4;cursor:pointer}
+      .cmrv-btn.danger{border-color:#d04555;color:#d04555}
+      .cmrv-btn.armed,.cmrv-btn.on{background:#d04555;border-color:#d04555;color:#fff;font-weight:600}
+      .cmrv-btn:disabled{opacity:.5;cursor:default}
+      .cmrv-del{position:absolute;right:8px;bottom:6px;z-index:2;opacity:.55}
+      .cmrv-del:hover,.cmrv-del.armed,.cmrv-del.on{opacity:1}
+    `;
+
+    function ensurePageCss() {
+      if (doc.getElementById('cmrv-style')) return;
+      const st = doc.createElement('style');
+      st.id = 'cmrv-style';
+      st.textContent = PAGE_CSS;
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+
+    // Dressing et page du lot : une barre de recherche juste au-dessus des annonces, comme si Vinted la proposait.
+    function ensureSearchBar() {
+      let bar = doc.querySelector('[data-cmrv-bar]');
+      const first = S.ctx.sellerId && cardEls()[0];
+      const grid = first && cardBox(first).parentElement;
+      if (!grid || !grid.parentElement) {
+        if (bar && !S.ctx.sellerId) bar.remove();
+        return;
+      }
+      if (bar && bar.nextElementSibling === grid) return;
+      if (bar) bar.remove();
+      bar = doc.createElement('button');
+      bar.type = 'button';
+      bar.className = 'cmrv-bar';
+      bar.setAttribute('data-cmrv-bar', '');
+      bar.innerHTML = '<span>🔎</span><span>Chercher une carte dans ce dressing…</span><b>Regroupeur</b>';
+      bar.title = 'Chercher dans tous les articles de ce vendeur et préparer un lot';
+      bar.addEventListener('click', () => setOpen(true));
+      grid.parentElement.insertBefore(bar, grid);
+    }
+
+    // ---------- Messagerie : supprimer des conversations ----------
+    // L'extension déroule le parcours de Vinted à ta place, avec ses propres boutons : ouvrir la conversation,
+    // « détails », « Supprimer la conversation », « Oui, supprimer ». Rien n'est supprimé sans une confirmation.
+
+    const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '' };
+    const convRow = (id) => doc.querySelector(`[data-testid="inbox-list-item-${id}"]`);
+    const convRows = () => [...doc.querySelectorAll('[data-testid^="inbox-list-item-"]')].filter((el) => /^inbox-list-item-\d+$/.test(el.getAttribute('data-testid')));
+    const convId = (el) => el.getAttribute('data-testid').slice('inbox-list-item-'.length);
+
+    async function until(fn, ms) {
+      const t0 = Date.now();
+      for (;;) {
+        const v = fn();
+        if (v) return v;
+        if (Date.now() - t0 > ms) return null;
+        await sleep(150);
+      }
+    }
+
+    // Renvoie null si la conversation a été supprimée, sinon la raison de l'échec.
+    async function deleteConversation(id) {
+      const row = convRow(id);
+      if (!row) return 'conversation introuvable';
+      const here = () => loc.pathname.startsWith(`/inbox/${id}`);
+      row.click();
+      const details = await until(() => here() && doc.querySelector('[data-testid="details-button"]'), 8000);
+      if (!details) return 'conversation non ouverte';
+      details.click();
+      const del = await until(() => loc.pathname.startsWith(`/inbox/${id}/details`) && doc.querySelector('[data-testid="conversation-actions-delete"]'), 8000);
+      if (!del) return 'Vinted ne propose pas de supprimer cette conversation';
+      del.click();
+      const yes = await until(() => doc.querySelector('[data-testid="confirm-delete-conversation"]'), 5000);
+      if (!yes || !here()) return 'confirmation de Vinted introuvable';
+      yes.click();
+      const gone = await until(() => !convRow(id) || (!here() && !doc.querySelector('[data-testid="confirm-delete-conversation"]')), 10000);
+      return gone ? null : 'Vinted n’a pas confirmé la suppression';
+    }
+
+    async function deleteMany(ids) {
+      inbox.busy = true;
+      inbox.armed = null;
+      let done = 0;
+      const failed = [];
+      for (let i = 0; i < ids.length; i++) {
+        inbox.msg = `Suppression ${i + 1} / ${ids.length}…`;
+        decorateInbox();
+        const err = await deleteConversation(ids[i]).catch(() => 'erreur inattendue');
+        if (err) failed.push(err);
+        else done++;
+        await sleep(700);
+      }
+      inbox.busy = false;
+      inbox.select = false;
+      inbox.picked.clear();
+      inbox.msg = `${done} conversation${done > 1 ? 's' : ''} supprimée${done > 1 ? 's' : ''}${failed.length ? ` · ${failed.length} non supprimée${failed.length > 1 ? 's' : ''} (${failed[0]})` : ''}`;
+      decorateInbox();
+    }
+
+    function arm(key) {
+      inbox.armed = key;
+      clearTimeout(inbox.timer);
+      inbox.timer = setTimeout(() => {
+        inbox.armed = null;
+        decorateInbox();
+      }, 4000);
+    }
+
+    function inboxAct(act, id) {
+      if (inbox.busy) return;
+      if (act === 'del') {
+        if (inbox.select) {
+          if (!inbox.picked.delete(id)) inbox.picked.add(id);
+          inbox.armed = null;
+        } else if (inbox.armed === id) return void deleteMany([id]);
+        else arm(id);
+      } else if (act === 'select') {
+        inbox.select = !inbox.select;
+        inbox.picked.clear();
+        inbox.armed = null;
+        inbox.msg = '';
+      } else if (act === 'all') {
+        for (const r of convRows()) inbox.picked.add(convId(r));
+        inbox.armed = null;
+      } else if (act === 'delsel') {
+        const ids = [...inbox.picked].filter(convRow);
+        if (!ids.length) return;
+        if (inbox.armed === 'sel') return void deleteMany(ids);
+        arm('sel');
+      }
+      decorateInbox();
+    }
+
+    function decorateInbox() {
+      if (!/^\/inbox(\/|$)/.test(loc.pathname)) return;
+      const rows = convRows();
+      const anchor = doc.querySelector('[data-testid^="inbox-list-item-"][data-testid$="-container"]');
+      if (!rows.length || !anchor || !anchor.parentElement) return;
+      let bar = doc.querySelector('[data-cmrv-ibar]');
+      if (!bar || bar.parentElement !== anchor.parentElement) {
+        if (bar) bar.remove();
+        bar = doc.createElement('div');
+        bar.className = 'cmrv-ibar';
+        bar.setAttribute('data-cmrv-ibar', '');
+        anchor.parentElement.insertBefore(bar, anchor.parentElement.firstChild);
+      }
+      const n = [...inbox.picked].filter(convRow).length;
+      const s = (k) => (k > 1 ? 's' : '');
+      const html = inbox.busy
+        ? `<b>Regroupeur</b><span>${esc(inbox.msg)}</span>`
+        : inbox.select
+          ? `<b>Regroupeur</b><span>${n} cochée${s(n)}</span><button class="cmrv-btn" data-cmrv-act="all">Tout cocher</button>
+             <button class="cmrv-btn danger${inbox.armed === 'sel' ? ' armed' : ''}" data-cmrv-act="delsel"${n ? '' : ' disabled'}>${inbox.armed === 'sel' ? `Confirmer : supprimer ${n} conversation${s(n)}` : `Supprimer (${n})`}</button>
+             <button class="cmrv-btn" data-cmrv-act="select">Annuler</button>`
+          : `<b>Regroupeur</b><span>${esc(inbox.msg)}</span><button class="cmrv-btn" data-cmrv-act="select">Supprimer plusieurs conversations</button>`;
+      if (bar.dataset.k !== html) {
+        bar.dataset.k = html;
+        bar.innerHTML = html;
+      }
+      for (const row of rows) {
+        const id = convId(row);
+        let b = row.querySelector('[data-cmrv-act="del"]');
+        if (!b) {
+          if (root.getComputedStyle(row).position === 'static') row.style.position = 'relative';
+          b = doc.createElement('button');
+          b.type = 'button';
+          b.setAttribute('data-cmrv-act', 'del');
+          b.dataset.id = id;
+          row.appendChild(b);
+        }
+        const on = inbox.select && inbox.picked.has(id);
+        const armed = !inbox.select && inbox.armed === id;
+        const text = inbox.select ? (on ? '☑ À supprimer' : '☐ Cocher') : armed ? 'Supprimer ?' : '🗑';
+        const cls = `cmrv-btn danger cmrv-del${armed ? ' armed' : ''}${on ? ' on' : ''}`;
+        if (b.textContent !== text) b.textContent = text;
+        if (b.className !== cls) b.className = cls;
+        b.title = inbox.select ? 'Cocher cette conversation' : armed ? 'Clique encore pour supprimer définitivement cette conversation' : 'Supprimer cette conversation';
+        b.disabled = inbox.busy;
+      }
+    }
+
+    // Les clics sur nos boutons ne doivent pas ouvrir la conversation sur laquelle ils sont posés.
+    doc.addEventListener(
+      'click',
+      (e) => {
+        const b = e.target && e.target.closest && e.target.closest('[data-cmrv-act]');
+        if (!b || b.getRootNode() !== doc) return;
+        e.preventDefault();
+        e.stopPropagation();
+        inboxAct(b.getAttribute('data-cmrv-act'), b.dataset.id);
+      },
+      true
+    );
+
     // ---------- Navigation (Vinted change de page sans recharger) ----------
 
     function onNav() {
@@ -913,6 +1125,9 @@
     function tick() {
       if (!host.isConnected) (doc.body || doc.documentElement).appendChild(host);
       if (loc.href !== S.href) onNav();
+      ensurePageCss();
+      ensureSearchBar();
+      decorateInbox();
       decorate();
       if (S.load.state === 'blocked' || S.load.state === 'error') if (harvestDom() && S.open) renderAll();
       if (syncPage() && S.open) renderAll();
