@@ -1,8 +1,14 @@
-/* Regroupeur — clic sur l'icône : ouvre / ferme le panneau sur Cardmarket ; mises à jour hors store. */
+/* Regroupeur — clic sur l'icône : ouvre / ferme le panneau sur Cardmarket ou Vinted ; mises à jour hors store. */
 const CARDMARKET = /^https:\/\/www\.cardmarket\.com\//;
+const VINTED = /^https:\/\/www\.vinted\.fr\//;
 
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
+  if (tab.url && VINTED.test(tab.url)) {
+    // Onglet ouvert avant l'installation : rien à faire, le panneau apparaîtra au prochain chargement.
+    await chrome.tabs.sendMessage(tab.id, { type: 'cmr:toggle' }).catch(() => {});
+    return;
+  }
   if (tab.url && CARDMARKET.test(tab.url)) {
     try {
       await chrome.tabs.sendMessage(tab.id, { type: 'cmr:toggle' });

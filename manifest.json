@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Regroupeur pour Cardmarket",
   "short_name": "Regroupeur",
-  "version": "1.0.0",
-  "description": "Trouve les vendeurs Cardmarket qui ont le plus de cartes de ta liste : moins de commandes, moins de port. Non officiel.",
+  "version": "1.1.0",
+  "description": "Cardmarket : regroupe tes achats chez le moins de vendeurs. Vinted : recherche dans un dressing, lots, prix avec envoi.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -20,11 +20,18 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage"],
-  "host_permissions": ["https://www.cardmarket.com/*"],
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://www.cardmarket.com/*",
+    "https://www.vinted.fr/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://www.cardmarket.com/*"],
+      "matches": [
+        "https://www.cardmarket.com/*"
+      ],
       "js": [
         "src/cm.js",
         "src/optimizer.js",
@@ -36,12 +43,25 @@
         "src/content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.vinted.fr/*"
+      ],
+      "js": [
+        "src/vinted.js"
+      ],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/panel.css"],
-      "matches": ["https://www.cardmarket.com/*"]
+      "resources": [
+        "src/panel.css"
+      ],
+      "matches": [
+        "https://www.cardmarket.com/*"
+      ]
     }
   ]
 }
