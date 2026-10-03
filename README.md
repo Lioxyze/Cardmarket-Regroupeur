@@ -1,6 +1,15 @@
-# Cardmarket Regroupeur
+# Regroupeur — Cardmarket & Vinted
 
-Extension navigateur pour Cardmarket qui aide à construire le meilleur plan d'achat pour une liste de cartes, en minimisant à la fois :
+Extension navigateur pour acheter des cartes plus simplement sur deux sites :
+
+- **Cardmarket** : le meilleur plan d'achat pour une liste de cartes (voir ci-dessous) ;
+- **Vinted** : recherche dans le dressing d'un vendeur, lot prérempli, prix avec envoi sous les annonces,
+  suppression de conversations (voir [Vinted](#vinted)).
+
+Un clic sur l'icône de l'extension ouvre son panneau sur ces deux sites ; ailleurs, il ouvre une page qui explique
+ce qu'elle fait sur chacun.
+
+Sur Cardmarket, elle aide à construire le meilleur plan d'achat pour une liste de cartes, en minimisant à la fois :
 
 - le coût total avec frais de port ;
 - le nombre de commandes ;
@@ -347,8 +356,8 @@ Les deux se comparent facilement sur une même liste.
 
 Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on achète des cartes :
 
-- **Recherche dans le dressing d'un vendeur.** Bouton « Chercher dans ce dressing » sur la page d'un membre et sur
-  sa page « Créer un lot ». Le dressing est lu par pages de 96 articles (10 requêtes pour 936 annonces), puis la
+- **Recherche dans le dressing d'un vendeur.** Barre « Chercher une carte dans ce dressing… » juste au-dessus des
+  annonces, sur la page d'un membre et sur sa page « Créer un lot ». Le dressing est lu par pages de 96 articles (10 requêtes pour 936 annonces), puis la
   recherche est instantanée : accents ignorés, numéro de carte avec ou sans zéros (`67` trouve `067/064`), une faute
   de frappe tolérée, les annonces en double triées de la moins chère à la plus chère.
 - **Une liste d'un coup.** Onglet « Une liste » : une carte par ligne, chaque ligne est cherchée chez ce vendeur ;
@@ -357,9 +366,13 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
   déjà ajoutés, sans faire défiler des centaines d'annonces. Sur la page du lot, le panneau suit le lot affiché par
   Vinted et peut encore y ajouter des annonces. L'extension n'achète rien : elle s'arrête à la page du lot.
 - **Prix avec envoi.** Sous chaque annonce : le total avec la protection acheteurs et l'envoi le moins cher vers le
-  compte connecté (en orange à partir de 4 € d'envoi). Même ligne sous le prix sur la page d'une annonce, et
-  estimation du total du lot dans le panneau.
+  compte connecté (en orange à partir de 4 € d'envoi), y compris sur la page d'accueil et dans les résultats de
+  recherche. Même ligne sous le prix sur la page d'une annonce, et estimation du total du lot dans le panneau.
 - **Nom de l'annonce** sous chaque vignette (Vinted ne l'affiche pas).
+- **Messagerie : supprimer des conversations.** Une corbeille sur chaque conversation (un clic, puis « Supprimer ? »
+  pour confirmer) et « Supprimer plusieurs conversations » pour en cocher plusieurs. L'extension déroule le parcours
+  de Vinted avec ses propres boutons (détails → « Supprimer la conversation » → « Oui, supprimer ») ; les
+  conversations que Vinted ne permet pas de supprimer (commande en cours) sont signalées et laissées.
 
 Sobriété : rien n'est lu tant que le panneau n'est pas ouvert ; les frais d'envoi ne sont demandés que pour les
 annonces visibles, une à la fois, et gardés 24 h ; dans un dressing, 3 lectures suffisent quand le vendeur a le même

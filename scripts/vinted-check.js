@@ -392,6 +392,18 @@ async function main() {
     ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length === 0)), 'affichages retirés quand les deux options sont décochées');
     ok(hits.shipping <= 22, `${hits.shipping} lectures de frais d’envoi sur tout le parcours`);
 
+    console.log('15. Clic sur l’icône hors Cardmarket et Vinted : page d’explication');
+    const sw = await (await browser.waitForTarget((t) => t.type() === 'service_worker', { timeout: 10000 })).worker();
+    const info = await sw.evaluate(() => ({ name: chrome.runtime.getManifest().name, url: chrome.runtime.getURL('src/accueil.html') }));
+    ok(info.name === 'Regroupeur — Cardmarket & Vinted', `nom de l’extension : ${info.name}`);
+    const welcome = await browser.newPage();
+    await welcome.goto(info.url);
+    const seen = await welcome.evaluate(() => ({ h1: document.querySelector('h1').textContent, sites: [...document.querySelectorAll('h2')].map((h) => h.textContent), links: [...document.querySelectorAll('a.go')].map((a) => a.href), icon: document.querySelector('header img').naturalWidth }));
+    ok(seen.sites.join() === 'Sur Cardmarket,Sur Vinted' && seen.links.length === 2 && seen.icon > 0, `« ${seen.h1} » : ${seen.sites.join(' / ')}`);
+    await welcome.setViewport({ width: 1100, height: 760 });
+    await welcome.screenshot({ path: path.join(OUT, 'accueil.png') });
+    await welcome.close();
+
     ok(errors.length === 0, errors.length ? errors.join('\n') : 'aucune erreur dans la console');
   } finally {
     await browser.close();
