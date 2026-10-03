@@ -458,7 +458,7 @@
       if (info.kind !== 'price' || card.total == null) return null;
       const dear = info.amount >= 4;
       return {
-        text: `${info.est ? '≈ ' : ''}${euro(card.total + info.amount)} avec envoi`,
+        text: `${info.est ? '≈ ' : ''}${euro(card.total + info.amount)} avec envoi${dear ? ` (dont ${euro(info.amount)} d’envoi)` : ''}`,
         tip: `Protection acheteurs incluse + envoi à partir de ${euro(info.amount)} (option la moins chère vers ton compte)${info.est ? ' — estimé d’après les autres annonces de ce vendeur' : ''}.`,
         dear,
       };
@@ -466,7 +466,9 @@
 
     function decorate() {
       const on = S.settings.titles || S.settings.shipping;
-      const autoShip = S.settings.shipping && S.ctx.kind !== 'home';
+      // Page d'un lot : l'envoi n'est payé qu'une fois, il est compté dans l'estimation du panneau.
+      const showShip = S.settings.shipping && S.ctx.kind !== 'bundle';
+      const autoShip = showShip && S.ctx.kind !== 'home';
       for (const el of cardEls()) {
         let lab = el.querySelector('[data-cmrv-label]');
         if (!on) {
@@ -474,7 +476,7 @@
           continue;
         }
         const card = cardInfo(el);
-        const info = S.settings.shipping ? shipFor(card.id) : null;
+        const info = showShip ? shipFor(card.id) : null;
         if (autoShip && !info && visible(el)) wantShip(card.id);
         const line = shipLine(card, info);
         const key = `${S.settings.titles ? card.title : ''}|${line ? line.text : ''}`;
@@ -735,7 +737,12 @@
             .join('');
         return;
       }
-      const results = searchItems(S.items, S.q, { sort: S.sort });
+      let results = searchItems(S.items, S.q, { sort: S.sort });
+      // Sans recherche : les articles du lot d'abord, pour les retrouver et les retirer facilement.
+      if (!tokens(S.q).length) {
+        const mine = (it) => S.pageSel.has(it.id) || S.wanted.has(it.id);
+        results = results.filter(mine).concat(results.filter((it) => !mine(it)));
+      }
       if (!results.length) {
         box.innerHTML = `<div class="empty">${S.load.state === 'loading' ? 'Lecture en cours…' : S.q ? `Aucune annonce pour « ${esc(S.q)} » chez ce vendeur.` : 'Aucun article.'}</div>`;
         return;
