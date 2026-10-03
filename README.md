@@ -56,6 +56,7 @@ Le but n'est pas seulement de trouver le plus bas prix unitaire, mais le meilleu
 - Plusieurs listes de collection sauvegardées
 - Vérification approfondie du stock des vendeurs les plus prometteurs
 - Compatibilité avec les pages de cartes, vendeurs et panier Cardmarket
+- Sur Vinted : recherche dans le dressing d'un vendeur, lot prérempli, prix avec envoi sous les annonces
 
 ---
 
@@ -342,6 +343,32 @@ Le Regroupeur ne remplace pas cet outil, il le complète :
 
 Les deux se comparent facilement sur une même liste.
 
+## Vinted
+
+Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on achète des cartes :
+
+- **Recherche dans le dressing d'un vendeur.** Bouton « Chercher dans ce dressing » sur la page d'un membre et sur
+  sa page « Créer un lot ». Le dressing est lu par pages de 96 articles (10 requêtes pour 936 annonces), puis la
+  recherche est instantanée : accents ignorés, numéro de carte avec ou sans zéros (`67` trouve `067/064`), une faute
+  de frappe tolérée, les annonces en double triées de la moins chère à la plus chère.
+- **Une liste d'un coup.** Onglet « Une liste » : une carte par ligne, chaque ligne est cherchée chez ce vendeur ;
+  « Reprendre ma liste Cardmarket » y recopie la liste du Regroupeur.
+- **Lot prérempli.** Les annonces cochées (« + Lot ») ouvrent la page « Créer un lot » de Vinted avec ces articles
+  déjà ajoutés, sans faire défiler des centaines d'annonces. Sur la page du lot, le panneau suit le lot affiché par
+  Vinted et peut encore y ajouter des annonces. L'extension n'achète rien : elle s'arrête à la page du lot.
+- **Prix avec envoi.** Sous chaque annonce : le total avec la protection acheteurs et l'envoi le moins cher vers le
+  compte connecté (en orange à partir de 4 € d'envoi). Même ligne sous le prix sur la page d'une annonce, et
+  estimation du total du lot dans le panneau.
+- **Nom de l'annonce** sous chaque vignette (Vinted ne l'affiche pas).
+
+Sobriété : rien n'est lu tant que le panneau n'est pas ouvert ; les frais d'envoi ne sont demandés que pour les
+annonces visibles, une à la fois, et gardés 24 h ; dans un dressing, 3 lectures suffisent quand le vendeur a le même
+tarif partout ; un refus de Vinted (403 / 429) met les lectures en pause 10 minutes et la recherche continue sur les
+annonces affichées. Les deux affichages se désactivent en bas du panneau.
+
+Tests : `npm test` (recherche, lecture des vignettes) et `npm run vinted-check` (vraie extension dans Chrome sans
+fenêtre, sur un faux Vinted servi localement : aucune requête réelle).
+
 ## Partager l'extension (sans donner le dépôt)
 
 `npm run zip` fabrique deux paquets dans `dist/` :
@@ -390,6 +417,7 @@ alors « Mise à jour prête → Activer maintenant » (sinon elle s'active au p
 npm install
 npm test           # optimiseur, parseurs (vraies pages enregistrées), analyse
 npm run ui-check   # parcours complet dans Chrome sans fenêtre, sur un faux Cardmarket (captures dans tests/screenshots)
+npm run vinted-check  # parcours Vinted avec la vraie extension, sur un faux Vinted
 npm run icons      # régénère les icônes
 npm run zip        # dist/ : paquet à donner (avec LISEZ-MOI) + paquet pour les stores
 npm run publier -- "notes"  # publie une nouvelle version sur la branche diffusion (mises à jour automatiques)
@@ -407,6 +435,7 @@ npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du
 | `src/cart.js` | Ajout au panier (formulaire de la ligne, remplacement, vérification) |
 | `src/optimizer.js` | Plans, combinaisons, statistiques vendeurs (sans dépendance, testé sous Node) |
 | `src/panel.js`, `src/panel.css` | Interface (shadow DOM, thème clair/sombre) |
+| `src/vinted.js` | Vinted : recherche dans un dressing, lot prérempli, prix avec envoi (fichier autonome) |
 | `tests/harness/` | Faux Cardmarket pour tester l'interface hors ligne |
 
 Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.js`

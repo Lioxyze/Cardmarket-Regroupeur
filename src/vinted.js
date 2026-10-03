@@ -204,7 +204,7 @@
     [hidden] { display: none !important; }
     .launch { position: fixed; right: 16px; bottom: 84px; z-index: 2147483000; display: flex; align-items: center; gap: 6px; padding: 9px 14px; border: 0; border-radius: 999px;
       background: var(--accent); color: var(--accent-ink); font-weight: 600; box-shadow: 0 6px 20px rgba(15,23,42,.28); }
-    .launch.mini { padding: 9px 11px; opacity: .85; }
+    .launch.mini { bottom: 16px; padding: 7px 9px; opacity: .8; }
     .panel { position: fixed; top: 64px; right: 16px; bottom: 84px; width: 400px; max-width: calc(100vw - 32px); z-index: 2147483000; display: flex; flex-direction: column;
       background: var(--bg); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 18px 50px rgba(15,23,42,.28); overflow: hidden; }
     header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }

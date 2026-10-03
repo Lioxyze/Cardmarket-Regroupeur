@@ -12,6 +12,8 @@ REGROUPEUR POUR CARDMARKET — installation (gratuite, 2 minutes)
    « Regroupeur-pour-Cardmarket » (celui qui contient manifest.json).
 
 5. Va sur https://www.cardmarket.com : le bouton « Regroupeur » apparaît en bas à droite.
+   Sur https://www.vinted.fr, ouvre le dressing d'un vendeur : bouton « Chercher dans ce dressing »
+   (recherche dans ses articles, lot prérempli, prix avec envoi sous les annonces).
    Astuce : épingle l'extension (icône puzzle en haut de Chrome → punaise).
 
 À SAVOIR

@@ -1,7 +1,12 @@
 # Regroupeur pour Cardmarket
 
-Extension Chrome qui trouve les vendeurs Cardmarket ayant le plus de cartes de ta liste : moins de commandes,
-moins de frais de port. Extension indépendante, non affiliée à Cardmarket.
+Extension Chrome pour acheter des cartes plus simplement :
+
+- **Cardmarket** : trouve les vendeurs ayant le plus de cartes de ta liste (moins de commandes, moins de frais de port) ;
+- **Vinted** : recherche dans le dressing d'un vendeur, lot prérempli en un clic, prix avec envoi et nom de l'annonce
+  sous chaque vignette.
+
+Extension indépendante, non affiliée à Cardmarket ni à Vinted.
 
 Version actuelle : **__VERSION__**
 
@@ -22,6 +27,7 @@ Version actuelle : **__VERSION__**
    (`%LOCALAPPDATA%\Regroupeur-pour-Cardmarket\extension` ; son chemin est déjà copié, colle-le avec Ctrl+V).
 
 3. Va sur [cardmarket.com](https://www.cardmarket.com) : le bouton **Regroupeur** apparaît en bas à droite.
+   Sur [vinted.fr](https://www.vinted.fr), ouvre le dressing d'un vendeur : bouton **Chercher dans ce dressing**.
 
 Laisse le **Mode développeur** activé : sinon Chrome désactive l'extension.
 
@@ -41,6 +47,6 @@ Clic droit sur `%LOCALAPPDATA%\Regroupeur-pour-Cardmarket\desinstaller.ps1` → 
 ## Confidentialité
 
 Aucune donnée n'est envoyée à qui que ce soit : tout reste dans ton navigateur. L'extension ne lit que des pages de
-www.cardmarket.com, avec ta session, et n'ajoute des cartes à ton panier que quand tu le demandes ; elle n'achète
-jamais rien. Le seul autre accès réseau est la lecture de `version.json` sur ce dépôt, pour savoir si une nouvelle
-version existe.
+www.cardmarket.com et de www.vinted.fr, avec ta session. Elle n'ajoute des cartes à ton panier Cardmarket ou à un
+lot Vinted que quand tu le demandes, et n'achète jamais rien. Le seul autre accès réseau est la lecture de
+`version.json` sur ce dépôt, pour savoir si une nouvelle version existe.
