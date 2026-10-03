@@ -797,7 +797,8 @@
     function renderAll() {
       const seller = !!S.ctx.sellerId;
       const launch = $('.launch');
-      launch.hidden = S.open;
+      const bar = doc.querySelector('[data-cmrv-bar]');
+      launch.hidden = S.open || !!(bar && visible(bar));
       launch.classList.toggle('mini', !seller);
       launch.textContent = seller ? '🔎 Chercher dans ce dressing' : '🔎';
       launch.title = seller ? 'Regroupeur : chercher un article chez ce vendeur et préparer un lot' : 'Regroupeur : réglages Vinted';
@@ -947,6 +948,8 @@
     // L'extension déroule le parcours de Vinted à ta place, avec ses propres boutons : ouvrir la conversation,
     // « détails », « Supprimer la conversation », « Oui, supprimer ». Rien n'est supprimé sans une confirmation.
 
+    const TRASH =
+      '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.5h6.8l.6-8.5M6.7 7v4M9.3 7v4"/></svg>';
     const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '' };
     const convRow = (id) => doc.querySelector(`[data-testid="inbox-list-item-${id}"]`);
     const convRows = () => [...doc.querySelectorAll('[data-testid^="inbox-list-item-"]')].filter((el) => /^inbox-list-item-\d+$/.test(el.getAttribute('data-testid')));
@@ -966,16 +969,29 @@
     async function deleteConversation(id) {
       const row = convRow(id);
       if (!row) return 'conversation introuvable';
-      const here = () => loc.pathname.startsWith(`/inbox/${id}`);
+      const path = () => loc.pathname.replace(/\/$/, '');
+      const here = () => path() === `/inbox/${id}` || path() === `/inbox/${id}/details`;
+      const onDetails = () => path() === `/inbox/${id}/details`;
       row.click();
-      const details = await until(() => here() && doc.querySelector('[data-testid="details-button"]'), 8000);
-      if (!details) return 'conversation non ouverte';
-      details.click();
-      const del = await until(() => loc.pathname.startsWith(`/inbox/${id}/details`) && doc.querySelector('[data-testid="conversation-actions-delete"]'), 8000);
+      if (!(await until(here, 8000))) return 'conversation non ouverte';
+      // L'en-tête de la conversation précédente reste affiché un instant : on attend le nouveau, puis on clique
+      // « détails » jusqu'à ce que l'adresse soit bien celle des détails de CETTE conversation.
+      await sleep(500);
+      const opened = await until(() => {
+        if (onDetails()) return true;
+        const b = here() && doc.querySelector('[data-testid="details-button"]');
+        if (b) b.click();
+        return false;
+      }, 8000);
+      if (!opened) return 'détails de la conversation non ouverts';
+      // Vinted ne propose pas « Supprimer » pour toutes les conversations (commande en cours…).
+      const actions = await until(() => onDetails() && doc.querySelectorAll('[data-testid^="conversation-actions-"]').length, 8000);
+      if (actions) await sleep(300);
+      const del = onDetails() && doc.querySelector('[data-testid="conversation-actions-delete"]');
       if (!del) return 'Vinted ne propose pas de supprimer cette conversation';
       del.click();
       const yes = await until(() => doc.querySelector('[data-testid="confirm-delete-conversation"]'), 5000);
-      if (!yes || !here()) return 'confirmation de Vinted introuvable';
+      if (!yes || !onDetails()) return 'confirmation de Vinted introuvable';
       yes.click();
       const gone = await until(() => !convRow(id) || (!here() && !doc.querySelector('[data-testid="confirm-delete-conversation"]')), 10000);
       return gone ? null : 'Vinted n’a pas confirmé la suppression';
@@ -1074,10 +1090,15 @@
         }
         const on = inbox.select && inbox.picked.has(id);
         const armed = !inbox.select && inbox.armed === id;
-        const text = inbox.select ? (on ? '☑ À supprimer' : '☐ Cocher') : armed ? 'Supprimer ?' : '🗑';
+        const text = inbox.select ? (on ? '☑ À supprimer' : '☐ Cocher') : armed ? 'Supprimer ?' : '';
         const cls = `cmrv-btn danger cmrv-del${armed ? ' armed' : ''}${on ? ' on' : ''}`;
-        if (b.textContent !== text) b.textContent = text;
+        if (b.dataset.t !== text) {
+          b.dataset.t = text;
+          if (text) b.textContent = text;
+          else b.innerHTML = TRASH;
+        }
         if (b.className !== cls) b.className = cls;
+        b.setAttribute('aria-label', 'Supprimer cette conversation');
         b.title = inbox.select ? 'Cocher cette conversation' : armed ? 'Clique encore pour supprimer définitivement cette conversation' : 'Supprimer cette conversation';
         b.disabled = inbox.busy;
       }
@@ -1127,6 +1148,8 @@
       if (loc.href !== S.href) onNav();
       ensurePageCss();
       ensureSearchBar();
+      const bar = doc.querySelector('[data-cmrv-bar]');
+      $('.launch').hidden = S.open || !!(bar && visible(bar));
       decorateInbox();
       decorate();
       if (S.load.state === 'blocked' || S.load.state === 'error') if (harvestDom() && S.open) renderAll();
