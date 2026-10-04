@@ -1350,9 +1350,11 @@
       }
     }
     const hour = () => Math.floor(Date.now() / 3600000);
-    function spend() {
+    function spend(count) {
+      const add = count === undefined ? 1 : fin(count);
+      if (!add) return;
       const s = shared();
-      share(s.h === hour() ? { n: s.n + 1 } : { h: hour(), n: 1 });
+      share(s.h === hour() ? { n: s.n + add } : { h: hour(), n: add });
     }
     const overBudget = () => {
       const s = shared();
@@ -1425,7 +1427,8 @@
             live.listDirty = live.convDirty = true;
           }
           if (kind === 'up') {
-            live.preUp = prev;
+            // Plusieurs hausses avant d'avoir pu relire : on garde la valeur la plus basse comme point de départ.
+            live.preUp = live.preUp === null ? prev : Math.min(live.preUp, prev);
             live.listDirty = live.convDirty = true;
             live.tries = 0;
             if (!onInbox()) live.pendingToast = true;
@@ -1483,7 +1486,7 @@
 
     async function callRefresh(what) {
       const res = await ask('refresh', what, 20000);
-      if (res.reason !== 'no-bridge') spend();
+      spend(res.sent || 0);
       if (res.status === 403 || res.status === 429) noteRefusal();
       if (res.conv === 'error' || res.list === 'error') live.heal = true;
       return res;
@@ -1545,6 +1548,7 @@
         live.listDirty = live.manual = live.skipped = false;
         live.listAt = Date.now();
         live.tries = 0;
+        if (!live.convDirty) live.preUp = null;
       } else if (res.list === 'skipped') {
         live.listDirty = false;
         live.skipped = true;

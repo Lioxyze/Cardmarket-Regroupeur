@@ -369,15 +369,31 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
   compte connecté (en orange à partir de 4 € d'envoi), y compris sur la page d'accueil et dans les résultats de
   recherche. Même ligne sous le prix sur la page d'une annonce, et estimation du total du lot dans le panneau.
 - **Nom de l'annonce** sous chaque vignette (Vinted ne l'affiche pas).
+- **Messages en direct.** La messagerie web de Vinted ne se rafraîchit jamais toute seule (relectures
+  automatiques désactivées dans son code). L'extension lit régulièrement le compteur de messages non lus — la
+  requête de la pastille du bandeau, quelques octets — et, quand il augmente, demande à Vinted de relire avec son
+  propre code la conversation ouverte, puis la liste si le message est arrivé ailleurs : le message apparaît sans
+  recharger, le fil reste en bas, le texte en cours de saisie est conservé. Hors messagerie : avis « Nouveau
+  message de X » et « (n) » dans le titre de l'onglet. Indicateur « en direct » dans la messagerie ; se désactive
+  en bas du panneau.
 - **Messagerie : supprimer des conversations.** Une corbeille sur chaque conversation (un clic, puis « Supprimer ? »
   pour confirmer) et « Supprimer plusieurs conversations » pour en cocher plusieurs. L'extension déroule le parcours
   de Vinted avec ses propres boutons (détails → « Supprimer la conversation » → « Oui, supprimer ») ; les
   conversations que Vinted ne permet pas de supprimer (commande en cours) sont signalées et laissées.
 
+Messages en direct, en détail : une conversation n'est relue que si tu es devant l'écran (fenêtre au premier plan
+et active, ou souris dans la page), car la relire la marque comme lue ; sinon seuls la pastille, le titre et la
+liste bougent, et le message s'affiche à ton retour. Cadence du compteur : 7 s avec une conversation ouverte, 15 s
+dans la messagerie, 60 s ailleurs, ralentie puis arrêtée sans activité (30 min) ; un seul onglet lit à la fois ;
+une baisse du compteur ne déclenche aucune requête ; la liste est relue au plus toutes les 30 s ; plafond de 700
+requêtes par heure. Si Vinted change son code, l'indicateur le dit et propose « Actualiser ».
+
+Un refus de Vinted (403 / 429) met en pause **toutes** les lectures de l'extension (direct, prix d'envoi,
+dressing) pendant 10 minutes, dans tous les onglets, même après un rechargement.
+
 Sobriété : rien n'est lu tant que le panneau n'est pas ouvert ; les frais d'envoi ne sont demandés que pour les
 annonces visibles, une à la fois, et gardés 24 h ; dans un dressing, 3 lectures suffisent quand le vendeur a le même
-tarif partout ; un refus de Vinted (403 / 429) met les lectures en pause 10 minutes et la recherche continue sur les
-annonces affichées. Les deux affichages se désactivent en bas du panneau.
+tarif partout ; après un refus de Vinted, la recherche continue sur les annonces affichées. Les deux affichages se désactivent en bas du panneau.
 
 Tests : `npm test` (recherche, lecture des vignettes) et `npm run vinted-check` (vraie extension dans Chrome sans
 fenêtre, sur un faux Vinted servi localement : aucune requête réelle).
@@ -448,7 +464,8 @@ npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du
 | `src/cart.js` | Ajout au panier (formulaire de la ligne, remplacement, vérification) |
 | `src/optimizer.js` | Plans, combinaisons, statistiques vendeurs (sans dépendance, testé sous Node) |
 | `src/panel.js`, `src/panel.css` | Interface (shadow DOM, thème clair/sombre) |
-| `src/vinted.js` | Vinted : recherche dans un dressing, lot prérempli, prix avec envoi (fichier autonome) |
+| `src/vinted.js` | Vinted : recherche dans un dressing, lot prérempli, prix avec envoi, messagerie (fichier autonome) |
+| `src/vinted-page.js` | Vinted, dans la page : fait relire à Vinted ses propres données (messages en direct) |
 | `tests/harness/` | Faux Cardmarket pour tester l'interface hors ligne |
 
 Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.js`

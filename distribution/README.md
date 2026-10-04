@@ -4,7 +4,8 @@ Extension Chrome pour acheter des cartes plus simplement :
 
 - **Cardmarket** : trouve les vendeurs ayant le plus de cartes de ta liste (moins de commandes, moins de frais de port) ;
 - **Vinted** : recherche dans le dressing d'un vendeur, lot prérempli en un clic, prix avec envoi et nom de l'annonce
-  sous chaque vignette (page d'accueil comprise), suppression de conversations dans la messagerie.
+  sous chaque vignette (page d'accueil comprise), messages en direct et suppression de conversations dans la
+  messagerie.
 
 Extension indépendante, non affiliée à Cardmarket ni à Vinted.
 

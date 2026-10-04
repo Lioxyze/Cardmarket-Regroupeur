@@ -165,10 +165,11 @@
   //   'none' (requête de Vinted introuvable) | 'fresh' | 'skipped' (liste trop longue) | 'busy' | 'error' | 'ok'
   async function refresh(req) {
     const found = scan();
-    const out = { ok: true, conv: 'none', list: 'none', status: 0 };
+    const out = { ok: true, conv: 'none', list: 'none', status: 0, sent: 0 }; // sent : requêtes réellement parties
     if (req.conversation) {
       for (const o of pick(found.list, CONV, (x) => String(x.options.queryKey[1]) === String(req.conversation))) {
         const r = await reread(o, req.convSince);
+        if (r.state === 'ok' || r.state === 'error') out.sent += 1;
         out.conv = worst(out.conv, r.state);
         out.status = out.status || r.status || 0;
       }
@@ -176,6 +177,7 @@
     if (req.list) {
       for (const o of pick(found.list, LIST)) {
         const r = req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince);
+        if (r.state === 'ok' || r.state === 'error') out.sent += pagesOf(o).length || 1; // une requête par page chargée
         out.list = worst(out.list, r.state);
         out.status = out.status || r.status || 0;
       }
