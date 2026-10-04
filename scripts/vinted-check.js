@@ -117,9 +117,10 @@ const QUERY_JS = `
   window.refetches = [];
   const api = async (u, opt) => { const r = await fetch(u, opt); if (!r.ok) { const e = new Error('http ' + r.status); e.status = r.status; throw e; } return r.json(); };
   const mk = (key, fn, enabled) => {
-    const o = { options: { queryKey: key, queryHash: JSON.stringify(key), enabled: enabled !== false }, data: undefined, at: 0, count: 0,
-      getCurrentQuery: () => ({ state: { dataUpdateCount: o.count, fetchStatus: 'idle' } }),
-      getCurrentResult: () => ({ data: o.data, dataUpdatedAt: o.at, isError: false, status: o.count ? 'success' : 'pending' }),
+    // Comme sur Vinted : les données brutes sont dans l'état de la requête, le composant en reçoit une version transformée.
+    const o = { options: { queryKey: key, queryHash: JSON.stringify(key), enabled: enabled !== false }, data: undefined, at: 0, count: 0, select: null,
+      getCurrentQuery: () => ({ state: { dataUpdateCount: o.count, fetchStatus: 'idle', fetchMeta: null, data: o.data } }),
+      getCurrentResult: () => ({ data: o.select && o.data ? o.select(o.data) : o.data, dataUpdatedAt: o.at, isError: false, status: o.count ? 'success' : 'pending' }),
       refetch: async () => {
         window.refetches.push(key[0]);
         try { o.data = await fn(); o.at = Date.now(); o.count++; render(); return { data: o.data, dataUpdatedAt: o.at, isError: false, status: 'success' }; }
@@ -142,6 +143,7 @@ const INBOX_JS = `
   const pane = $('#pane'), list = $('#list');
   let current = null;
   const listObs = mk(['legacy-inbox-conversations'], async () => ({ pages: [await api('/api/v2/inbox?page=1&per_page=5')] }));
+  listObs.select = (d) => ({ conversations: d.pages.flatMap((p) => p.conversations) });
   const offObs = mk(['inbox-conversations', { isVespaEnabled: false }], async () => ({ pages: [] }), false);
   let convObs = null;
   const setHooks = () => mount(list, [unreadObs, listObs, offObs].concat(convObs ? [[convObs, 0]] : []));

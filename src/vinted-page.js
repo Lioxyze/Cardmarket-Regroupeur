@@ -83,6 +83,13 @@
     }
   }
 
+  // Pages de la liste telles que Vinted les garde (ses composants n'en reçoivent qu'une version transformée).
+  function pagesOf(o) {
+    const st = queryState(o);
+    const data = (st && st.data) || o.getCurrentResult().data;
+    return data && Array.isArray(data.pages) ? data.pages : [];
+  }
+
   function enabled(o) {
     try {
       const e = o.options.enabled;
@@ -175,9 +182,7 @@
     }
     if (req.list) {
       for (const o of pick(found.list, LIST)) {
-        const data = o.getCurrentResult().data;
-        const pages = data && Array.isArray(data.pages) ? data.pages.length : 0;
-        const r = req.maxPages && pages > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince, false);
+        const r = req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince, false);
         out.list = worst(out.list, r.state);
         out.status = out.status || r.status || 0;
       }
@@ -189,8 +194,7 @@
   function state() {
     const restricted = [];
     for (const o of pick(scan().list, LIST)) {
-      const data = o.getCurrentResult().data;
-      for (const page of (data && data.pages) || []) {
+      for (const page of pagesOf(o)) {
         for (const c of (page && page.conversations) || []) {
           if (c && (c.is_deletion_restricted || c.isDeletionRestricted)) restricted.push(String(c.id));
         }
