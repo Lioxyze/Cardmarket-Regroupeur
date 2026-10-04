@@ -1310,7 +1310,8 @@
     // pastille du bandeau, quelques octets). Quand il AUGMENTE, Vinted relit avec son propre code (src/vinted-page.js)
     // la conversation ouverte — seulement si l'utilisateur est devant, car la lire la marque comme lue — puis la
     // liste si le message était ailleurs. Une baisse (conversation lue) ne déclenche aucune requête.
-    // Un seul onglet lit à la fois (verrou + heure partagée dans localStorage).
+    // Un seul onglet lit le compteur à la fois (verrou + heure partagée dans localStorage).
+    // Dans la messagerie, onglet visible, un détecteur plus rapide s'y ajoute : la « tête de liste » (voir pollHead).
 
     const LIVE_KEY = 'cmrv.live';
     const LIVE_BUDGET = 1800; // lectures par heure, tous onglets confondus
@@ -1356,7 +1357,8 @@
     // sa messagerie) : on retombe alors sur le compteur seul.
     // fresh : conversations non lues d'après la tête de liste ; flash : lignes à faire briller (identifiant → heure
     // de l'éclat) ; skew : avance de l'horloge de Vinted sur celle de cet ordinateur.
-    const head = { mode: 'on', sig: null, at: 0, busy: false, fails: 0, errors: 0, jitter: 1, fresh: new Map(), flash: new Map(), skew: 0 };
+    // since : première lecture réussie ; okAt : dernière ; offUntil : fin de la mise à l'écart ; refused : refus 403/429.
+    const head = { mode: 'on', sig: null, at: 0, busy: false, fails: 0, errors: 0, jitter: 1, fresh: new Map(), flash: new Map(), skew: 0, since: 0, okAt: 0, offUntil: 0, refused: 0 };
     const FLASH = 3000;
     const onInbox = () => /^\/inbox(\/|$)/.test(loc.pathname);
     const openConv = () => {
@@ -1412,6 +1414,7 @@
         t: Math.min(fin(v.t), now), // dernière lecture du compteur, tous onglets confondus
         unread: typeof v.unread === 'number' && isFinite(v.unread) ? v.unread : null,
         changedAt: Math.min(fin(v.changedAt), now), // dernière hausse observée
+        ht: Math.min(fin(v.ht), now), // dernière lecture de la tête de liste, tous onglets confondus
         ann: Math.min(fin(v.ann), now), // dernier avis « Nouveau message » affiché
         h: fin(v.h), // heure en cours et nombre de requêtes du direct, pour le plafond horaire
         n: fin(v.n),
@@ -1473,6 +1476,7 @@
         const run = async () => {
           const s = shared();
           const last = Math.max(live.t, s.t);
+          const own = live.t; // lecture précédente de cet onglet : la référence de sa propre valeur
           if (!adopt && Date.now() - last < 2500) return undefined; // un autre onglet vient de lire
           // La valeur que Vinted a déjà en main dans cette page ne vaut que si elle est plus récente que la dernière
           // lecture connue (sinon un onglet resté ouvert ferait revenir une ancienne valeur dans l'état partagé).
@@ -1509,8 +1513,12 @@
             live.heal = false;
             if (live.tries < 3) live.listDirty = live.convDirty = true;
           }
-          if (kind === 'up' && onInbox() && head.mode === 'on') {
-            // Dans la messagerie, c'est la tête de liste qui dit quoi relire ; le compteur ne sert qu'à la pastille.
+          // Dans la messagerie, c'est la tête de liste qui dit quoi relire ; le compteur ne sert qu'à la pastille. À
+          // condition qu'elle ait déjà été suivie lors de la lecture précédente du compteur : sinon la hausse a pu
+          // précéder sa première lecture (messagerie chargée dans un onglet d'arrière-plan).
+          const followed = onInbox() && head.mode === 'on' && head.since > 0 && head.since <= own;
+          if (kind === 'up' && followed) {
+            // rien à relire d'ici
           } else if (kind === 'up') {
             // Plusieurs hausses avant d'avoir pu relire : on garde la valeur la plus basse comme point de départ.
             live.preUp = live.preUp === null ? prev : Math.min(live.preUp, prev);
@@ -1538,37 +1546,74 @@
       }
     }
 
+    // Deux échecs de suite : retour au compteur seul. Définitif si Vinted ne sert plus cette lecture (404), dix
+    // minutes sinon (panne passagère).
+    function headFail(status) {
+      if (++head.fails < 2) return;
+      head.fails = 0;
+      head.mode = 'off';
+      head.offUntil = status === 404 || status === 410 ? Infinity : Date.now() + 10 * MINUTE;
+      live.listDirty = live.convDirty = true; // les hausses du compteur étaient ignorées jusque-là
+    }
+
+    // La zone de saisie qui se vide : un message vient de partir de cet onglet.
+    function noteDraft() {
+      const draft = ((doc.querySelector('[data-testid="composer--input"]') || {}).value || '').length;
+      if (live.draft > 0 && draft === 0) live.sentAt = Date.now();
+      live.draft = draft;
+    }
+
     // Lit la conversation la plus récente de la messagerie. Si elle a changé, un message est arrivé (ou a été envoyé
     // depuis un autre appareil) : dans la conversation ouverte, on la relit ; ailleurs, on relit la liste.
     async function pollHead() {
       head.busy = true;
       head.at = Date.now();
       head.jitter = 0.85 + Math.random() * 0.3;
+      share({ ht: head.at });
       try {
         const signal = root.AbortSignal && root.AbortSignal.timeout ? root.AbortSignal.timeout(8000) : undefined;
         const r = await root.fetch('/api/v2/inbox?page=1&per_page=1', { headers: { accept: 'application/json' }, credentials: 'same-origin', signal });
         spend();
-        if (r.status === 403 || r.status === 429) return void noteRefusal();
-        if (r.status === 401) return void (live.stopped = true);
-        if (!r.ok) {
-          if (++head.fails >= 2) head.mode = 'off';
-          return;
+        if (r.status === 403 || r.status === 429) {
+          if (++head.refused >= 2) head.mode = 'off'; // deux refus de cette lecture : compteur seul jusqu'au rechargement
+          return void noteRefusal();
         }
-        const c = ((await r.json()).conversations || [])[0] || null;
+        if (r.status === 401) return void (live.stopped = true);
+        if (!r.ok) return void headFail(r.status);
+        const body = await r.json();
+        if (!body || !Array.isArray(body.conversations)) return void headFail(0);
+        const c = body.conversations[0] || null;
         head.fails = head.errors = 0;
+        const now = Date.now();
+        const late = now - head.okAt > 10000; // lectures espacées : plusieurs changements ont pu se fondre en un
+        head.okAt = now;
         const served = Date.parse(r.headers.get('date') || '');
-        if (isFinite(served)) head.skew = served - Date.now();
+        if (isFinite(served)) head.skew = served - now;
         const next = { id: c ? String(c.id) : '', at: c ? String(c.updated_at || '') : '', unread: !!(c && c.unread) };
         const kind = liveHeadChange(head.sig, next);
         head.sig = next;
+        if (kind === 'first') head.since = now;
         if (kind === 'first' || kind === 'same') return;
+        const mine = !!next.id && next.id === openConv();
+        if (kind !== 'new') {
+          // Lue (ici ou sur un autre appareil) : plus de pastille sur la ligne, sans requête. Le compteur n'est relu
+          // pour le titre que s'il ne vient pas de l'être après notre propre relecture de la conversation.
+          if (!next.unread && next.id) {
+            head.fresh.delete(next.id);
+            inbox.opened.set(next.id, now);
+          }
+          if (!(mine && (live.busy || now - live.t < 4000))) live.force = true;
+          return;
+        }
+        // Message envoyé depuis cet onglet : Vinted l'a déjà affiché, rien à relire.
+        noteDraft();
+        if (mine && !next.unread && now - live.sentAt < 8000) return;
         live.force = true; // pastille du bandeau et titre de l'onglet
-        if (kind !== 'new') return;
-        share({ changedAt: Date.now() });
+        share({ changedAt: now });
         live.tries = 0;
-        if (next.id && next.id === openConv()) live.convDirty = true;
-        else {
-          live.listDirty = true;
+        if (mine || late) live.convDirty = true; // sans conversation ouverte, la passe suivante l'efface
+        if (!mine || late || inbox.select) live.listDirty = true; // pendant une sélection : garde-fou avant suppression
+        if (!mine) {
           // Éclat de la ligne une fois la liste relue (dans 4 s au plus tard), que le message soit reçu ou envoyé
           // depuis un autre appareil.
           if (next.id) head.flash.set(next.id, Date.now() + 4000);
@@ -1691,7 +1736,10 @@
       if (openConv() === conv && !inbox.busy) follow(before);
       // La lire l'a marquée comme lue : si le compteur est revenu à sa valeur d'avant la hausse, le message était
       // ici et la liste n'a pas besoin d'être relue.
-      const n = await pollUnread(0, true);
+      // Tête de liste suivie : le compteur ne sert qu'à la pastille et au titre ; une lecture, après le marquage « lu ».
+      const light = live.preUp === null && head.mode === 'on';
+      if (light) live.force = true;
+      const n = light ? undefined : await pollUnread(0, true);
       if (typeof n === 'number' && live.preUp !== null && n <= live.preUp) live.listDirty = false;
       live.preUp = null;
       await rereadIfSent(conv, t0);
@@ -1857,11 +1905,7 @@
       const s = shared();
       applyTitle(s, now);
       const inboxPage = onInbox();
-      if (inboxPage) {
-        const draft = ((doc.querySelector('[data-testid="composer--input"]') || {}).value || '').length;
-        if (live.draft > 0 && draft === 0) live.sentAt = now;
-        live.draft = draft;
-      }
+      if (inboxPage) noteDraft();
       // Sans requête : conversations que Vinted ne permet pas de supprimer (lues dans sa liste déjà chargée).
       if (inboxPage && bridge() && now - live.stateAt > 3000) {
         live.stateAt = now;
@@ -1919,10 +1963,18 @@
       }
 
       // 2. Tête de liste : toutes les 3 s quand l'utilisateur est actif dans la messagerie, onglet visible.
+      //    Après une pause, elle attend comme le reste qu'une lecture du compteur ait réussi.
+      if (head.mode === 'off' && now >= head.offUntil && head.refused < 2) head.mode = 'on';
       const headOn = inboxPage && head.mode === 'on';
-      if (vis && headOn && !head.busy && !live.refreshing && !overBudget()) {
-        const gap = liveHeadInterval(idleMs) * (head.errors ? 2 : 1) * head.jitter;
-        if (gap && now - head.at >= gap) pollHead();
+      // Un autre onglet a lu la tête depuis notre dernière lecture : sans le focus, celui-ci se contente de 20 s.
+      const second = s.ht > head.at && !doc.hasFocus();
+      const base = liveHeadInterval(second ? Math.max(idleMs, 5 * MINUTE) : idleMs);
+      // Le reste du plafond horaire (moins 100 lectures gardées pour le compteur et les relectures) est étalé sur le
+      // reste de l'heure : la tête ralentit au lieu de tout couper jusqu'à l'heure pile.
+      const room = LIVE_BUDGET - 100 - (s.h === hour() ? s.n : 0);
+      if (vis && headOn && base && room > 0 && tested && !head.busy && !live.refreshing) {
+        const gap = Math.max(base * (head.errors ? 2 : 1) * head.jitter, (3600000 - (now % 3600000)) / room);
+        if (now - head.at >= gap) pollHead();
       }
 
       // 3. Lire le compteur quand c'est le moment.

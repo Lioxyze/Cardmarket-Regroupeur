@@ -657,6 +657,17 @@ async function main() {
     ok(await waitFor(async () => /^● bob — Encore disponible/.test(await rowText(102)) && /vérifie ta sélection/.test(await ibar()), 8000), `avant de confirmer, la liste est relue : ${(await ibar()).replace(/\n/g, ' | ')}`);
     ok(!/Confirmer/.test(await ibar()) && (await page.evaluate(() => (window.deleted || []).length)) === 0, 'aucune suppression n’est armée par ce premier clic');
     await press('[data-cmrv-act="select"]');
+    // Même garde-fou quand le message arrive dans la conversation ouverte (elle aussi peut être cochée).
+    await sleep(3000);
+    await press('[data-cmrv-act="select"]');
+    await press('[data-cmrv-act="del"][data-id="104"]');
+    await here();
+    const n17 = await msgs();
+    receive(104, 'Attends, j’ai une question');
+    ok(await waitFor(async () => /nouveau message/.test(await ibar()), 9000), `message dans la conversation ouverte : prévenu aussi (${(await ibar()).replace(/\n/g, ' | ')})`);
+    await press('[data-cmrv-act="select"]');
+    await here();
+    ok(await waitFor(async () => (await msgs()) === n17 + 1, 9000), 'sélection annulée : le message s’affiche');
 
     console.log('18. Deux onglets : une seule lecture du compteur');
     const tab2 = await browser.newPage();

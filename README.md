@@ -384,13 +384,20 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
 Messages en direct, en détail : dans la messagerie, l'extension lit toutes les 2,5 s environ (utilisateur actif,
 onglet visible) la « tête de liste », c'est-à-dire la conversation la plus récente (une requête de 4 Ko). Elle
 change dès qu'un message arrive ou part, y compris un message envoyé depuis un autre appareil. Si c'est la
-conversation ouverte, Vinted la relit ; sinon il relit sa liste, et la ligne reçoit une pastille « nouveau
-message » (Vinted ne met qu'un fond discret). Une conversation n'est relue que si tu es devant l'écran (fenêtre
-active, ou souris dans la page), car la relire la marque comme lue. La cadence ralentit sans activité (6 s après
-2 min, 20 s après 5 min, arrêt après 30 min) ; le compteur de non-lus n'est plus lu que toutes les 30 s, pour la
-pastille du bandeau et le titre de l'onglet ; plafond de 1 800 requêtes par heure. Hors messagerie : compteur
-toutes les 60 s. Si Vinted ne sert plus la tête de liste, l'extension retombe sur le compteur seul ; si son code
-change, l'indicateur le dit et propose « Actualiser ».
+conversation ouverte, Vinted la relit ; sinon il relit sa liste. Une conversation n'est relue que si tu es devant
+l'écran (fenêtre active, ou souris dans la page), car la relire la marque comme lue.
+
+Message reçu dans une autre conversation : la ligne s'illumine, reste teintée en vert et porte une pastille verte
+« Nouveau » à gauche de la corbeille, jusqu'à ce que tu ouvres la conversation (ou qu'elle soit lue sur un autre
+appareil). Un message que tu envoies toi-même depuis un autre appareil n'est pas un message reçu : la ligne se met
+à jour et s'illumine un instant, sans pastille.
+
+La cadence ralentit sans activité (6 s après 2 min, 20 s après 5 min, arrêt après 30 min), et dans une seconde
+fenêtre sans le focus (20 s) ; le compteur de non-lus n'est plus lu que toutes les 30 s, pour la pastille du
+bandeau et le titre de l'onglet. Plafond de 1 800 requêtes par heure : quand il approche, la tête de liste
+ralentit pour étaler ce qui reste sur la fin de l'heure, au lieu de tout couper. Hors messagerie : compteur toutes
+les 60 s. Si Vinted ne sert plus la tête de liste (ou la refuse deux fois), l'extension retombe sur le compteur
+seul ; si son code change, l'indicateur le dit et propose « Actualiser ».
 
 Vinted n'envoie au navigateur ni indicateur « en train d'écrire » ni notification en temps réel (aucun canal de
 ce type dans sa version web) : l'extension ne peut donc pas l'afficher.
