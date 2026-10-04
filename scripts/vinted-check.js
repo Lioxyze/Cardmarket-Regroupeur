@@ -574,6 +574,33 @@ async function main() {
     receive(105, 'Bonjour, je prends le lot');
     ok(await waitFor(() => dot(105), 7000), `pastille « nouveau message » sur la ligne, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
     ok(await waitFor(async () => /^● emma — Bonjour, je prends le lot/.test(await rowText(105)), 9000), `la liste affiche le message, en ${((Date.now() - t0) / 1000).toFixed(1)} s : ${await rowText(105)}`);
+    // La marque doit se voir : pastille verte « Nouveau » collée à gauche de la corbeille, ligne teintée et éclat.
+    const mark105 = () => page.evaluate(() => {
+      const row = document.querySelector('[data-testid="inbox-list-item-105"]');
+      const pill = row.querySelector('[data-cmrv-new]');
+      const bin = row.querySelector('[data-cmrv-act="del"]');
+      if (!pill || !bin) return null;
+      const p = pill.getBoundingClientRect();
+      const b = bin.getBoundingClientRect();
+      const r = row.getBoundingClientRect();
+      return {
+        text: pill.textContent,
+        bg: getComputedStyle(pill).backgroundColor,
+        gap: Math.round(b.left - p.right),
+        level: Math.abs(p.bottom - b.bottom) < 2,
+        inside: p.left >= r.left && p.right <= r.right && p.top >= r.top && p.bottom <= r.bottom,
+        wide: p.width >= 50 && p.height >= 20,
+        tint: row.hasAttribute('data-cmrv-fresh') && /inset/.test(getComputedStyle(row).boxShadow),
+        flash: row.hasAttribute('data-cmrv-flash'),
+      };
+    });
+    let seenFlash = false;
+    await waitFor(async () => (seenFlash = seenFlash || ((await mark105()) || {}).flash), 5000);
+    const m105 = (await mark105()) || {};
+    ok(m105.text === 'Nouveau' && m105.bg === 'rgb(18, 161, 80)' && m105.wide && m105.inside, `pastille verte « ${m105.text} » dans la ligne (${m105.bg})`);
+    ok(m105.gap >= 2 && m105.gap <= 12 && m105.level, `juste à gauche de la corbeille (${m105.gap} px d’écart)`);
+    ok(m105.tint && seenFlash, 'ligne teintée, avec un éclat à l’arrivée du message');
+    await shot('nouveau');
     ok(await waitFor(async () => /Messages 1$/.test(await badge()) && /^\(1\) /.test(await page.title()), 9000), `pastille du bandeau et titre de l’onglet : ${await badge()} ; « ${await page.title()} »`);
     ok(hits.inbox - c1.inbox === 1 && (await msgs()) === 4 && !(await dot(104)), `une seule lecture de la liste (${hits.inbox - c1.inbox}), rien sur la conversation ouverte`);
     ok(!(await page.evaluate(() => window.refetches.includes('inbox-conversations'))), 'les requêtes que Vinted a désactivées ne sont pas relancées');
@@ -586,7 +613,17 @@ async function main() {
     await sleep(1500);
     await press('[data-testid="inbox-list-item-104"]');
     await sleep(1500);
-    ok(!(await dot(105)), 'la pastille disparaît une fois la conversation ouverte');
+    ok(!(await dot(105)) && !(await page.evaluate(() => !!document.querySelector('[data-cmrv-fresh]'))), 'la pastille disparaît une fois la conversation ouverte');
+    // Message envoyé par l'utilisateur depuis son téléphone dans une autre conversation : ce n'est pas un message
+    // reçu (pas de pastille), mais la ligne qui change s'illumine un instant.
+    await here();
+    await sleep(3000);
+    const flash102 = () => page.evaluate(() => document.querySelector('[data-testid="inbox-list-item-102"]').hasAttribute('data-cmrv-flash'));
+    t0 = Date.now();
+    sendFromPhone(102, 'Je te l’envoie demain');
+    ok(await waitFor(flash102, 7000), `message envoyé d’un autre appareil dans une autre conversation : la ligne s’illumine, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    ok(/Je te l’envoie demain/.test(await rowText(102)) && !(await dot(102)), `aperçu à jour, sans pastille « Nouveau » : ${await rowText(102)}`);
+    ok(await waitFor(async () => !(await flash102()), 6000), 'l’éclat s’éteint tout seul');
 
     console.log('16. Onglet caché : rien n’est relu, puis rattrapage au retour');
     const other = await browser.newPage();

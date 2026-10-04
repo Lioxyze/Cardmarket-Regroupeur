@@ -1027,7 +1027,12 @@
       .cmrv-btn:disabled{opacity:.5;cursor:default}
       .cmrv-del{position:absolute;right:8px;bottom:6px;z-index:2;opacity:.55}
       .cmrv-del:hover,.cmrv-del.armed,.cmrv-del.on{opacity:1}
-      .cmrv-new{position:absolute;left:5px;top:50%;width:9px;height:9px;margin-top:-4px;border-radius:50%;background:#007782;box-shadow:0 0 0 2px rgba(0,119,130,.25);pointer-events:none}
+      .cmrv-new{position:absolute;right:42px;bottom:6px;z-index:2;display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:12px;background:#12a150;color:#fff;font-size:11px;font-weight:700;line-height:1;white-space:nowrap;pointer-events:none;box-shadow:0 1px 5px rgba(18,161,80,.45)}
+      .cmrv-new::before{content:'';width:7px;height:7px;border-radius:50%;background:#fff}
+      [data-cmrv-fresh][data-cmrv-fresh][data-cmrv-fresh]{box-shadow:inset 4px 0 0 #12a150;background-color:rgba(18,161,80,.1)}
+      [data-cmrv-flash]{animation:cmrv-flash 2.4s ease-out}
+      @keyframes cmrv-flash{from{background-color:rgba(18,161,80,.5)}}
+      @media (prefers-reduced-motion:reduce){[data-cmrv-flash]{animation:none}}
       .cmrv-live{font-style:normal;font-size:12px;opacity:.75;white-space:nowrap}
       .cmrv-live.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#1a9c5b;vertical-align:1px}
       .cmrv-live.new{opacity:1;font-weight:600;color:#007782}
@@ -1238,17 +1243,6 @@
           row.appendChild(b);
         }
         if (b.dataset.id !== id) b.dataset.id = id; // React peut réutiliser une ligne pour une autre conversation
-        // Pastille « nouveau message » : Vinted ne met qu'un fond discret sur une conversation non lue.
-        let dot = row.querySelector('[data-cmrv-new]');
-        if (isNewConversation(id)) {
-          if (!dot) {
-            dot = doc.createElement('span');
-            dot.className = 'cmrv-new';
-            dot.setAttribute('data-cmrv-new', '');
-            dot.title = 'Nouveau message';
-            row.appendChild(dot);
-          }
-        } else if (dot) dot.remove();
         const locked = inbox.restricted.has(id);
         const on = inbox.select && !locked && inbox.picked.has(id);
         const armed = !inbox.select && !locked && inbox.armed === id;
@@ -1269,7 +1263,30 @@
               ? 'Clique encore pour supprimer définitivement cette conversation'
               : 'Supprimer cette conversation';
         b.disabled = inbox.busy || locked;
+        // Nouveau message : pastille verte à gauche de la corbeille et ligne teintée, jusqu'à l'ouverture de la
+        // conversation (Vinted ne met qu'un fond discret). Un bref éclat signale toute ligne qui vient de changer.
+        const fresh = isNewConversation(id);
+        let dot = row.querySelector('[data-cmrv-new]');
+        if (fresh && !dot) {
+          dot = doc.createElement('span');
+          dot.className = 'cmrv-new';
+          dot.setAttribute('data-cmrv-new', '');
+          dot.textContent = 'Nouveau';
+          row.appendChild(dot);
+        } else if (!fresh && dot) dot.remove();
+        if (fresh) {
+          const right = `${(b.offsetWidth || 24) + 14}px`; // la corbeille s'élargit quand elle porte un texte
+          if (dot.style.right !== right) dot.style.right = right;
+        }
+        mark(row, 'data-cmrv-fresh', fresh);
+        mark(row, 'data-cmrv-flash', flashing(id));
       }
+    }
+
+    function mark(el, name, on) {
+      if (on === el.hasAttribute(name)) return;
+      if (on) el.setAttribute(name, '');
+      else el.removeAttribute(name);
     }
 
     // Les clics sur nos boutons ne doivent pas ouvrir la conversation sur laquelle ils sont posés.
@@ -1337,7 +1354,10 @@
     };
     // Tête de liste : détecteur rapide de la messagerie. 'off' si Vinted ne sert plus cette lecture (autre version de
     // sa messagerie) : on retombe alors sur le compteur seul.
-    const head = { mode: 'on', sig: null, at: 0, busy: false, fails: 0, errors: 0, jitter: 1, fresh: new Map() };
+    // fresh : conversations non lues d'après la tête de liste ; flash : lignes à faire briller (identifiant → heure
+    // de l'éclat) ; skew : avance de l'horloge de Vinted sur celle de cet ordinateur.
+    const head = { mode: 'on', sig: null, at: 0, busy: false, fails: 0, errors: 0, jitter: 1, fresh: new Map(), flash: new Map(), skew: 0 };
+    const FLASH = 3000;
     const onInbox = () => /^\/inbox(\/|$)/.test(loc.pathname);
     const openConv = () => {
       const m = loc.pathname.match(/^\/inbox\/([^/]+)/);
@@ -1536,6 +1556,8 @@
         }
         const c = ((await r.json()).conversations || [])[0] || null;
         head.fails = head.errors = 0;
+        const served = Date.parse(r.headers.get('date') || '');
+        if (isFinite(served)) head.skew = served - Date.now();
         const next = { id: c ? String(c.id) : '', at: c ? String(c.updated_at || '') : '', unread: !!(c && c.unread) };
         const kind = liveHeadChange(head.sig, next);
         head.sig = next;
@@ -1547,7 +1569,13 @@
         if (next.id && next.id === openConv()) live.convDirty = true;
         else {
           live.listDirty = true;
-          if (next.unread) head.fresh.set(next.id, Date.now()); // pastille tout de suite, avant même la relecture de la liste
+          // Éclat de la ligne une fois la liste relue (dans 4 s au plus tard), que le message soit reçu ou envoyé
+          // depuis un autre appareil.
+          if (next.id) head.flash.set(next.id, Date.now() + 4000);
+          if (next.unread) {
+            head.fresh.set(next.id, Date.now()); // pastille tout de suite, avant même la relecture de la liste
+            inbox.opened.delete(next.id); // arrivé après la dernière visite de cette conversation
+          }
         }
       } catch (e) {
         // Réseau coupé ou délai dépassé : un second essai deux fois plus tard, puis silence.
@@ -1567,8 +1595,15 @@
       if (!S.settings.live || id === openConv()) return false;
       if (head.fresh.has(id)) return true;
       if (!inbox.unread.has(id)) return false;
+      // Les dates de Vinted sont à son horloge : la dernière visite y est ramenée, à 2 s près.
       const at = Date.parse(inbox.unread.get(id));
-      return !(inbox.opened.get(id) >= at);
+      return !(inbox.opened.get(id) + head.skew + 2000 >= at);
+    }
+
+    function flashing(id) {
+      const at = head.flash.get(id);
+      const now = Date.now();
+      return at !== undefined && now >= at && now - at < FLASH;
     }
 
     // Fil de la conversation ouverte : élément qui défile, pour rester en bas quand un message arrive.
@@ -1670,6 +1705,7 @@
         live.listDirty = live.manual = live.skipped = false;
         live.listAt = Date.now();
         live.tries = 0;
+        for (const [id, at] of head.flash) if (at > live.listAt) head.flash.set(id, live.listAt + 150); // le temps que Vinted réaffiche
         if (!live.convDirty) live.preUp = null;
       } else if (res.list === 'skipped') {
         live.listDirty = false;
@@ -1841,8 +1877,11 @@
         if (open) {
           inbox.opened.set(open, now);
           head.fresh.delete(open);
+          head.flash.delete(open);
         }
         for (const [id, at] of head.fresh) if (now - at > MINUTE || inbox.unread.has(id)) head.fresh.delete(id);
+        if (head.flash.size) decorateInbox(); // l'éclat commence et finit à l'heure, sans attendre la passe de décoration
+        for (const [id, at] of head.flash) if (now - at > FLASH) head.flash.delete(id);
       }
       if (!S.settings.live || live.stopped || inbox.busy) return;
       if (now < blockedUntil() || now < live.localPauseUntil) {
@@ -1966,6 +2005,10 @@
       ship.queue = [];
       ship.queued.clear();
       for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act],[data-cmrv-new]')) el.remove();
+      for (const el of doc.querySelectorAll('[data-cmrv-fresh],[data-cmrv-flash]')) {
+        el.removeAttribute('data-cmrv-fresh');
+        el.removeAttribute('data-cmrv-flash');
+      }
       host.remove();
       S.settings.live = false;
     }
