@@ -146,22 +146,15 @@
   }
 
   // 'ok' | 'fresh' (données plus récentes que demandé) | 'busy' (Vinted lit déjà) | 'error'
-  async function reread(o, since, guardWrites) {
+  async function reread(o, since) {
     const st = queryState(o);
     if (since && o.getCurrentResult().dataUpdatedAt >= since) return { state: 'fresh' };
     if (st && st.fetchStatus && st.fetchStatus !== 'idle') return { state: 'busy' };
-    const writes = st ? st.dataUpdateCount : 0;
-    let r = await settle(o.refetch({ cancelRefetch: false }));
+    const r = await settle(o.refetch({ cancelRefetch: false }));
     if (failed(r)) return { state: 'error', status: statusOf(r) };
     const after = queryState(o);
     // Vinted a chargé la page suivante de la liste pendant notre lecture : la nôtre a été remplacée.
     if (after && after.fetchMeta && after.fetchMeta.fetchMore) return { state: 'busy' };
-    // Vinted a écrit lui-même dans ses données pendant notre lecture (message envoyé) et notre réponse, partie avant,
-    // l'a recouvert : on relit une fois.
-    if (guardWrites && after && after.dataUpdateCount - writes > 1) {
-      r = await settle(o.refetch({ cancelRefetch: false }));
-      if (failed(r)) return { state: 'error', status: statusOf(r) };
-    }
     return { state: 'ok' };
   }
 
@@ -175,14 +168,14 @@
     const out = { ok: true, conv: 'none', list: 'none', status: 0 };
     if (req.conversation) {
       for (const o of pick(found.list, CONV, (x) => String(x.options.queryKey[1]) === String(req.conversation))) {
-        const r = await reread(o, req.convSince, true);
+        const r = await reread(o, req.convSince);
         out.conv = worst(out.conv, r.state);
         out.status = out.status || r.status || 0;
       }
     }
     if (req.list) {
       for (const o of pick(found.list, LIST)) {
-        const r = req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince, false);
+        const r = req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince);
         out.list = worst(out.list, r.state);
         out.status = out.status || r.status || 0;
       }

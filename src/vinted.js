@@ -1280,6 +1280,8 @@
       pendingToast: false,
       prefix: '',
       stateAt: 0,
+      draft: 0, // longueur du message en cours de saisie
+      sentAt: 0, // dernière fois que la zone de saisie s'est vidée : un message vient de partir
     };
     const onInbox = () => /^\/inbox(\/|$)/.test(loc.pathname);
     const openConv = () => {
@@ -1508,10 +1510,19 @@
       live.manual = true;
     }
 
+    // L'utilisateur a envoyé un message pendant notre lecture : la réponse, partie avant, peut avoir recouvert le
+    // message que Vinted venait d'ajouter à l'écran. On relit une fois. (Signal pris dans la page : la zone de saisie
+    // qui se vide. Compter les écritures de Vinted dans ses données ne marche pas, il en fait après chaque lecture.)
+    async function rereadIfSent(conv, since) {
+      await sleep(1200);
+      if (live.sentAt >= since - 800 && openConv() === conv && !inbox.busy) await callRefresh({ conversation: conv });
+    }
+
     // Hausse du compteur, conversation ouverte et utilisateur présent : on la relit (1 requête).
     async function showNewInConversation() {
       const conv = openConv();
       const before = convView();
+      const t0 = Date.now();
       const res = await callRefresh({ conversation: conv });
       if (res.conv === 'busy') return; // Vinted lit déjà : on repasse dans quelques secondes
       if (res.conv !== 'ok' && res.conv !== 'fresh') return void giveUp();
@@ -1523,6 +1534,7 @@
       const n = await pollUnread(0, true);
       if (typeof n === 'number' && live.preUp !== null && n <= live.preUp) live.listDirty = false;
       live.preUp = null;
+      await rereadIfSent(conv, t0);
     }
 
     // Hausse du compteur pour un message arrivé ailleurs : on relit la liste (au plus toutes les 30 s).
@@ -1554,10 +1566,13 @@
     async function safetyPass() {
       const conv = openConv();
       const before = convView();
-      const since = Date.now() - 100000;
+      const t0 = Date.now();
+      const since = t0 - 100000;
       const res = await callRefresh({ list: true, maxPages: 2, listSince: since, conversation: conv, convSince: since });
       if (res.list === 'ok') live.listAt = Date.now();
-      if (res.conv === 'ok' && openConv() === conv && !inbox.busy) follow(before);
+      if (res.conv !== 'ok') return;
+      if (openConv() === conv && !inbox.busy) follow(before);
+      await rereadIfSent(conv, t0);
     }
 
     // Avis discret, en bas à gauche de la page. action : adresse à ouvrir (vrai lien) ou fonction.
@@ -1661,6 +1676,11 @@
       const s = shared();
       applyTitle(s, now);
       const inboxPage = onInbox();
+      if (inboxPage) {
+        const draft = ((doc.querySelector('[data-testid="composer--input"]') || {}).value || '').length;
+        if (live.draft > 0 && draft === 0) live.sentAt = now;
+        live.draft = draft;
+      }
       // Sans requête : conversations que Vinted ne permet pas de supprimer (lues dans sa liste déjà chargée).
       if (inboxPage && bridge() && now - live.stateAt > 3000) {
         live.stateAt = now;
