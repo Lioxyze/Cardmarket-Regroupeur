@@ -38,6 +38,7 @@
         "src/fetcher.js",
         "src/storage.js",
         "src/analyzer.js",
+        "src/compare.js",
         "src/cart.js",
         "src/panel.js",
         "src/content.js"
@@ -49,6 +50,7 @@
         "https://www.vinted.fr/*"
       ],
       "js": [
+        "src/compare.js",
         "src/vinted.js"
       ],
       "run_at": "document_idle"

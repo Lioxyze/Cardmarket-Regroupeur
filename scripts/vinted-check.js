@@ -14,6 +14,8 @@ const ROOT = path.join(__dirname, '..');
 const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'tests', 'screenshots'));
 const CHROME = process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const SITE = 'https://www.vinted.fr';
+const CM_SITE = 'https://www.cardmarket.com';
+const C = require(path.join(ROOT, 'src', 'compare.js'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- Faux dressing ----------
@@ -252,10 +254,58 @@ function fakePage(url) {
   }
   if (/^\/items\/\d+/.test(url.pathname)) {
     return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Annonce</title></head><body>
+      <header><a href="/member/4242">Mon profil</a></header>
+      <div data-testid="item-page-summary-plugin"><h1>Gribouraigne – 297/190</h1><p>Très bon état·Pokémon·Ajouté il y a 3 minutes</p></div>
       <div data-testid="item-sidebar-price-container"><p data-testid="item-price">4,99 €</p><span data-testid="total-combined-price">5,94 €</span></div>
-      <div data-testid="item-shipping-banner"><h3>Envoi</h3><span data-testid="item-shipping-banner-price">à partir de 4,35 €</span></div></body></html>`;
+      <div data-testid="item-attributes-status"><div>État</div><div itemprop="status"><span>Très bon état<button aria-label="Condition information"></button></span></div></div>
+      <div itemprop="description">KEITOCARDS | Gribouraigne – 297/190\n\n🇯🇵 Carte Japonaise\n✨ État : Voir photos (Recto/Verso)</div>
+      <div data-testid="item-shipping-banner"><h3>Envoi</h3><span data-testid="item-shipping-banner-price">à partir de 4,35 €</span></div>
+      <a href="/member/777">pok-test</a></body></html>`;
   }
   return null;
+}
+
+// ---------- Faux Cardmarket : recherche (mode liste) et fiches, au format que lisent les parseurs de src/cm.js ----------
+// La recherche « nom + numéro » de Gribouraigne ne trouve rien (comme si Cardmarket ignorait les numéros) : la
+// recherche suivante, par nom seul, doit prendre le relais.
+const CM_ROWS = {
+  Gribouraigne: [
+    ['Gribouraigne (SVI 001)', 'Ecarlate-et-Violet/Gribouraigne-SVI001', '001'],
+    ['Gribouraigne (sv4a 297)', 'Shiny-Treasure-ex/Gribouraigne-sv4a297', '297'],
+    ['Gribouraigne (PAF 003)', 'Destinees-de-Paldea/Gribouraigne-PAF003', '003'],
+  ],
+  'Dracaufeu 006': [['Dracaufeu-ex (sv2a 006)', 'Pokemon-Card-151/Dracaufeu-ex-sv2a006', '006']],
+  'Pikachu 025': [
+    ['Pikachu (MEW 025)', '151/Pikachu-MEW025', '025'],
+    ['Pikachu (sv2a 025)', 'Pokemon-Card-151/Pikachu-sv2a025', '025'],
+    ['Pikachu (SVI 063)', 'Ecarlate-et-Violet/Pikachu-SVI063', '063'],
+  ],
+};
+// Offres : [prix, état (code, rang), langue (nom, id), pays du vendeur]
+const CM_OFFERS = {
+  'Shiny-Treasure-ex/Gribouraigne-sv4a297': [['2,20 €', 'EX', 3, 'Japonais', 7, 'Allemagne'], ['2,50 €', 'NM', 2, 'Japonais', 7, 'France']],
+  'Pokemon-Card-151/Dracaufeu-ex-sv2a006': [['30,00 €', 'NM', 2, 'Japonais', 7, 'France']],
+  '151/Pikachu-MEW025': [['0,50 €', 'NM', 2, 'Français', 2, 'France'], ['0,30 €', 'NM', 2, 'Anglais', 1, 'France']],
+};
+function fakeCardmarket(url) {
+  const shell = (title, sub, body) => `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title} | Cardmarket</title></head><body style="font-family:sans-serif;padding:16px 440px 16px 16px">
+    <main><div class="page-title-container"><h1>${title}<span> ${sub}</span></h1></div>${body}</main></body></html>`;
+  if (url.pathname === '/fr/Pokemon/Products/Search') {
+    const rows = (CM_ROWS[url.searchParams.get('searchString')] || []).map(([name, slug, num], i) => `<div id="productRow${100 + i}" class="row g-0" style="padding:6px">
+      <div data-testid="name"><a href="/fr/Pokemon/Products/Singles/${slug}">${name}</a></div><div data-testid="collector_number">${num}</div>
+      <div data-testid="availability">12</div><div data-testid="from_price">1,00 €</div></div>`);
+    return shell('Rechercher', '', `<div class="table-body">${rows.join('')}</div>`);
+  }
+  const m = url.pathname.match(/^\/fr\/Pokemon\/Products\/Singles\/([^/]+\/[^/]+)$/);
+  if (!m || !CM_OFFERS[m[1]]) return null;
+  const langs = (url.searchParams.get('language') || '').split(',').filter(Boolean).map(Number);
+  const min = Number(url.searchParams.get('minCondition')) || 7;
+  const offers = CM_OFFERS[m[1]].filter(([, , rank, , lang]) => rank <= min && (!langs.length || langs.includes(lang)));
+  const rows = offers.map(([price, cond, , lang, , country], i) => `<div id="articleRow${500 + i}" class="row g-0 article-row" style="padding:6px">
+    <div class="col-seller"><span title="Emplacement de l'article : ${country}"></span><a href="/fr/Pokemon/Users/vendeur${i}">vendeur${i}</a></div>
+    <div class="product-attributes"><a class="article-condition"><span class="badge">${cond}</span></a><span title="${lang}"></span></div>
+    <div class="col-offer"><div class="price-container"><span class="color-primary">${price}</span></div><span class="item-count">1</span></div></div>`);
+  return shell(decodeURIComponent(m[1].split('/')[1]), `${m[1].split('/')[0]} - Singles`, `<div class="table-body">${rows.join('') || '<p>Aucune offre</p>'}</div>`);
 }
 
 async function main() {
@@ -485,7 +535,113 @@ async function main() {
     ok(await waitFor(() => inPanel((sh) => !sh.querySelector('.panel').hidden)), 'un clic ouvre la recherche');
     await shot('barre');
 
-    console.log('12. Messagerie : supprimer une conversation');
+    console.log('12. Annonce de carte : « Voir sur Cardmarket », avec la langue et l’état de l’annonce');
+    await page.goto(`${SITE}/items/77700012-carte`);
+    await hostReady();
+    ok(await waitFor(() => page.evaluate(() => !!document.querySelector('[data-cmrv-cmbtn]'))), 'bouton ajouté sous le prix');
+    const btn = await page.evaluate(() => {
+      const a = document.querySelector('[data-cmrv-cmbtn]');
+      return { text: a.innerText.replace(/\s+/g, ' '), href: a.href, target: a.target, tip: a.title, inBox: !!a.closest('[data-testid="item-sidebar-price-container"]') };
+    });
+    ok(/Voir sur Cardmarket/.test(btn.text) && /japonais · Excellent ou mieux/.test(btn.text) && btn.target === '_blank' && btn.inBox, btn.text);
+    const mark = C.decodeMarker(btn.href.slice(btn.href.indexOf('#'))) || {};
+    ok(
+      btn.href.startsWith(`${CM_SITE}/fr/Pokemon/Products/Search?searchString=Gribouraigne+297&mode=list&category=1#cmrv=`) && mark.l === 7 && mark.ls === 1 && mark.c === 'EX' && mark.tp === 5.94 && mark.sh === 4.35 && mark.u === '/items/77700012',
+      `recherche « Gribouraigne 297 », japonais (lu dans la description), EX, ${mark.tp} € + ${mark.sh} € d’envoi`
+    );
+    ok(/description/.test(btn.tip) && /Très bon état/.test(btn.tip), `infobulle : ${btn.tip}`);
+    await shot('cardmarket-bouton');
+    // Sous les vignettes : le même lien ; la langue lue sur cette annonce sert aux autres annonces du vendeur.
+    await page.goto(`${SITE}/member/777`);
+    await hostReady();
+    ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-cm]').length >= 15)), 'lien « Cardmarket » sous les vignettes de cartes');
+    const thumbs = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid^="product-item-id-"][data-testid$="--overlay-link"]')].slice(0, 4).map((o) => {
+        const a = o.parentElement.querySelector('[data-cmrv-cm]');
+        if (!a) return null;
+        const r = a.getBoundingClientRect();
+        return { href: a.href, onTop: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === a };
+      })
+    );
+    const tm = (i) => (thumbs[i] ? C.decodeMarker(thumbs[i].href.slice(thumbs[i].href.indexOf('#'))) : null) || {};
+    ok(thumbs[0] === null, 'pas de lien sur « Carapuce » sans numéro ni mot « carte » (peluche, tee-shirt…)');
+    ok(thumbs[1] && thumbs[1].onTop && /searchString=Salam%C3%A8che\+008/.test(thumbs[1].href) && tm(1).c === 'EX' && tm(3).c === 'GD', `« Salamèche – 008/165 » : lien cliquable, état Très bon état → ${tm(1).c}, Bon état → ${tm(3).c}`);
+    ok(tm(1).l === 7 && tm(1).ls === 0 && tm(1).lf === 'vendeur', `langue reprise de l’annonce déjà vue chez ce vendeur : ${tm(1).l === 7 ? 'japonais' : tm(1).l}, à confirmer`);
+    const setCm = (on) =>
+      inPanel((sh, v) => {
+        const c = sh.querySelector('#opt-cm');
+        c.checked = v;
+        c.dispatchEvent(new Event('change', { bubbles: true }));
+      }, on);
+    await setCm(false);
+    ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-cm]').length === 0)), 'réglage décoché : plus de lien');
+    await setCm(true);
+    ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-cm]').length >= 15)), 'réglage recoché : les liens reviennent');
+
+    console.log('13. Arrivée sur Cardmarket : la bonne carte, les filtres de l’annonce, les deux prix');
+    const cmTab = await browser.newPage();
+    await cmTab.setViewport({ width: 1440, height: 900 });
+    const cmErrors = [];
+    cmTab.on('pageerror', (e) => cmErrors.push(e.message));
+    let cmSeen = [];
+    await cmTab.setRequestInterception(true);
+    cmTab.on('request', (req) => {
+      const u = new URL(req.url());
+      if (u.protocol === 'chrome-extension:') return req.continue();
+      if (u.origin !== CM_SITE) return req.abort();
+      const html = fakeCardmarket(u);
+      if (html) cmSeen.push(u.pathname.split('/').pop() + u.search);
+      return html ? req.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html }) : req.respond({ status: 404, body: '' });
+    });
+    const banner = () =>
+      cmTab.evaluate(() => {
+        const h = document.getElementById('cmrc-host');
+        return h ? h.shadowRoot.querySelector('.box').innerText.replace(/\s+/g, ' ') : '';
+      });
+    const at = () => new URL(cmTab.url());
+    await cmTab.goto(btn.href).catch(() => {});
+    ok(await waitFor(async () => /sur vinted/i.test(await banner()), 15000), 'bandeau de comparaison affiché');
+    ok(at().pathname === '/fr/Pokemon/Products/Singles/Shiny-Treasure-ex/Gribouraigne-sv4a297' && at().search === '?language=7&minCondition=3', `fiche de la carte n° 297, filtres japonais + EX ou mieux : ${at().pathname.split('/').pop()}${at().search}`);
+    ok(cmSeen.length === 3, `3 pages affichées, aucune requête cachée : ${cmSeen.join(' → ')}`);
+    let b = await banner();
+    ok(/10,29 €/.test(b) && /≈ 4,10 €/.test(b) && /Cardmarket moins cher de ≈ 6,19 €/.test(b), b);
+    ok(/Langue lue dans la description/.test(b) && /« Très bon état » comparé à « Excellent ou mieux »/.test(b), 'le bandeau dit d’où viennent la langue et l’état');
+    ok(await cmTab.evaluate(() => !!document.getElementById('cmr-host')), 'le panneau Cardmarket de l’extension est toujours là');
+    await cmTab.screenshot({ path: path.join(OUT, 'vinted-cardmarket-bandeau.png') }).then(() => console.log('  capture vinted-cardmarket-bandeau'));
+    await cmTab.evaluate(() => [...document.getElementById('cmrc-host').shadowRoot.querySelectorAll('.chip')].find((c) => c.textContent === 'NM').click());
+    ok(await waitFor(async () => at().search === '?language=7&minCondition=2' && /sur vinted/i.test(await banner()), 10000), `un clic sur « NM » : même fiche, état changé, comparaison conservée (${at().search})`);
+    // Formulaire de filtres de Cardmarket : l'adresse n'a plus de fragment, la comparaison reste sur cette fiche.
+    await cmTab.goto(`${CM_SITE}/fr/Pokemon/Products/Singles/Shiny-Treasure-ex/Gribouraigne-sv4a297?language=7`).catch(() => {});
+    ok(await waitFor(async () => /sur vinted/i.test(await banner()), 8000), 'filtre changé avec le formulaire de Cardmarket : le bandeau reste');
+    await cmTab.goto(`${CM_SITE}/fr/Pokemon/Products/Singles/151/Pikachu-MEW025`).catch(() => {});
+    await sleep(1200);
+    ok((await banner()) === '', 'autre fiche ouverte ensuite : pas de bandeau');
+
+    // Langue non précisée dans l'annonce (français supposé) et fiche sans offre française : toutes les langues.
+    const listing2 = { title: 'Dracaufeu ex 006/165', brand: 'Pokémon', status: 'Bon état', description: '' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing2), { title: listing2.title, status: listing2.status, price: 40, total: 42.7, shipping: 2.83, url: '/items/123' })).catch(() => {});
+    ok(await waitFor(async () => /toutes les langues sont affichées/.test(await banner()), 15000), 'langue supposée et aucune offre : le filtre de langue est retiré, et c’est dit');
+    b = await banner();
+    ok(at().pathname.endsWith('/Dracaufeu-ex-sv2a006') && at().search === '?minCondition=4' && /45,53 €/.test(b) && /≈ 33,50 €/.test(b) && /Cardmarket moins cher de ≈ 12,03 €/.test(b), `${at().search} — ${b}`);
+    ok(cmSeen.length === 3, `3 pages : ${cmSeen.join(' → ')}`);
+
+    // Deux cartes au même numéro : pas de choix automatique.
+    const listing3 = { title: 'Pikachu 025/165 FR', brand: 'Pokémon', status: 'Très bon état', description: '' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing3), { title: listing3.title, status: listing3.status, price: 1, total: 1.75, shipping: null, url: '/items/124' })).catch(() => {});
+    ok(await waitFor(async () => /Plusieurs cartes portent le n° 025\/165/.test(await banner()), 15000), `deux cartes au n° 025 : ${await banner()}`);
+    const picks = await cmTab.evaluate(() => [...document.querySelectorAll('[id^="productRow"]')].map((r) => ({ href: r.querySelector('a').getAttribute('href'), marked: /outline/.test(r.getAttribute('style') || '') })));
+    ok(at().pathname.endsWith('/Search') && cmSeen.length === 1 && picks.filter((x) => x.marked).length === 2 && picks.every((x) => /\?language=2&minCondition=3#cmrv=/.test(x.href)), 'on reste sur la recherche : les deux cartes sont encadrées, chaque lien mène à la fiche déjà filtrée');
+    await cmTab.evaluate(() => document.querySelector('[id^="productRow"] a').click());
+    ok(await waitFor(async () => /hors envoi/.test(await banner()), 10000), 'carte choisie à la main : comparaison affichée');
+    b = await banner();
+    ok(at().search === '?language=2&minCondition=3' && /1,75 € protection incluse, hors envoi/.test(b) && /0,50 € hors port \(≈ 1,60 € en plus, FR\)/.test(b) && /Cardmarket moins cher de ≈ 1,25 € \(hors envoi\)/.test(b), `envoi Vinted inconnu : prix comparés hors envoi des deux côtés — ${b}`);
+    ok(cmErrors.length === 0, `aucune erreur sur les pages Cardmarket${cmErrors.length ? ' : ' + cmErrors.join(' | ') : ''}`);
+    await cmTab.close();
+    await page.bringToFront();
+
+    console.log('14. Messagerie : supprimer une conversation');
     await page.goto(`${SITE}/inbox`);
     await hostReady();
     const dels = () => page.evaluate(() => [...document.querySelectorAll('[data-cmrv-act="del"]')].map((b) => b.dataset.id + ':' + b.textContent));
@@ -499,7 +655,7 @@ async function main() {
     ok(await waitFor(() => page.evaluate(() => (window.deleted || []).join() === '102')), 'second clic : la conversation 102 est supprimée par le parcours de Vinted');
     ok(await waitFor(async () => /1 conversation supprimée/.test(await ibar())), (await ibar()).replace(/\n/g, ' | '));
 
-    console.log('13. Messagerie : supprimer plusieurs conversations');
+    console.log('15. Messagerie : supprimer plusieurs conversations');
     const delBtn = (id) => page.evaluate((i) => {
       const b = document.querySelector(`[data-cmrv-act="del"][data-id="${i}"]`);
       return b ? { disabled: b.disabled, title: b.title } : null;
@@ -521,7 +677,7 @@ async function main() {
     ok((await page.evaluate(() => (window.deleted || []).join())) === '102,101,104', 'supprimées : 101 et 104 ; la 106 (sans action « Supprimer ») est laissée');
     ok((await page.evaluate(() => !!document.querySelector('[data-testid="inbox-list-item-105"]') && !!document.querySelector('[data-testid="inbox-list-item-UHJvbW8="]'))), 'les conversations non cochées sont intactes');
 
-    console.log('14. Messages en direct : nouveau message dans la conversation ouverte');
+    console.log('16. Messages en direct : nouveau message dans la conversation ouverte');
     BOX = freshInbox();
     await page.goto(`${SITE}/inbox`);
     await hostReady();
@@ -566,7 +722,7 @@ async function main() {
     sendFromPhone(104, 'Envoyé depuis mon téléphone');
     ok(await waitFor(async () => (await msgs()) === 4, 9000) && Date.now() - t0 < 6500, `un message envoyé depuis un autre appareil apparaît aussi, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
-    console.log('15. Messages en direct : nouveau message dans une autre conversation');
+    console.log('17. Messages en direct : nouveau message dans une autre conversation');
     await here();
     await sleep(4500);
     const c1 = { conv: hits.conv, inbox: hits.inbox };
@@ -625,7 +781,7 @@ async function main() {
     ok(/Je te l’envoie demain/.test(await rowText(102)) && !(await dot(102)), `aperçu à jour, sans pastille « Nouveau » : ${await rowText(102)}`);
     ok(await waitFor(async () => !(await flash102()), 6000), 'l’éclat s’éteint tout seul');
 
-    console.log('16. Onglet caché : rien n’est relu, puis rattrapage au retour');
+    console.log('18. Onglet caché : rien n’est relu, puis rattrapage au retour');
     const other = await browser.newPage();
     await other.bringToFront();
     if (!(await waitFor(() => page.evaluate(() => document.visibilityState === 'hidden'), 4000))) console.log('  (ignoré : ce Chrome ne signale pas l’onglet comme caché)');
@@ -642,7 +798,7 @@ async function main() {
     await other.close();
     await page.bringToFront();
 
-    console.log('17. Pendant une sélection de suppression, la liste ne bouge pas');
+    console.log('19. Pendant une sélection de suppression, la liste ne bouge pas');
     await sleep(4000);
     await press('[data-cmrv-act="select"]');
     await press('[data-cmrv-act="del"][data-id="101"]');
@@ -669,7 +825,7 @@ async function main() {
     await here();
     ok(await waitFor(async () => (await msgs()) === n17 + 1, 9000), 'sélection annulée : le message s’affiche');
 
-    console.log('18. Deux onglets : une seule lecture du compteur');
+    console.log('20. Deux onglets : une seule lecture du compteur');
     const tab2 = await browser.newPage();
     await tab2.setRequestInterception(true);
     tab2.on('request', handle);
@@ -686,7 +842,7 @@ async function main() {
     await tab2.close();
     await page.bringToFront();
 
-    console.log('19. Ailleurs sur Vinted : avis « Nouveau message »');
+    console.log('21. Ailleurs sur Vinted : avis « Nouveau message »');
     await page.goto(`${SITE}/member/777`);
     await hostReady();
     await sleep(2500);
@@ -722,7 +878,7 @@ async function main() {
     await tabB.close();
     await page.bringToFront();
 
-    console.log('20. Vinted refuse une lecture : tout se met en pause, partout');
+    console.log('22. Vinted refuse une lecture : tout se met en pause, partout');
     await hostReady();
     await here();
     ok(await waitFor(async () => /en direct/.test(await ibar())), 'en direct avant le refus');
@@ -742,7 +898,7 @@ async function main() {
     await sleep(3000);
     ok(/en pause — Vinted a refusé/.test(await ibar()), 'et la messagerie reste en pause');
 
-    console.log('21. Lecture en échec sans code (réseau) : un second essai plus tard, puis silence');
+    console.log('23. Lecture en échec sans code (réseau) : un second essai plus tard, puis silence');
     await page.evaluate(() => {
       localStorage.removeItem('cmrv.block');
       localStorage.removeItem('cmrv.live');
@@ -763,7 +919,7 @@ async function main() {
     ok(hits.head === c5.head && hits.stats === c5.stats && hits.conv === c5.conv && hits.inbox === c5.inbox, 'puis silence : plus aucune lecture');
     BOX.fail = false;
 
-    console.log('22. Tête de liste indisponible : retour à la lecture du compteur');
+    console.log('24. Tête de liste indisponible : retour à la lecture du compteur');
     await page.evaluate(() => {
       localStorage.removeItem('cmrv.block');
       localStorage.removeItem('cmrv.live');
@@ -782,7 +938,7 @@ async function main() {
     ok(hits.head - h6 === 2 && /en direct/.test(await ibar()), `tête de liste abandonnée (${hits.head - h6} lectures), indicateur : ${(await ibar()).replace(/\n/g, ' | ')}`);
     BOX.headGone = false;
 
-    console.log('23. Page sans pastille de messages : lecture directe, sans insister');
+    console.log('25. Page sans pastille de messages : lecture directe, sans insister');
     await page.evaluate(() => {
       localStorage.removeItem('cmrv.block');
       localStorage.removeItem('cmrv.live');
@@ -796,7 +952,7 @@ async function main() {
     await sleep(8000);
     ok(hits.stats - s6 === 1, 'et une seule');
 
-    console.log('24. Réglage « Messages en direct » décoché');
+    console.log('26. Réglage « Messages en direct » décoché');
     await page.goto(`${SITE}/inbox`);
     await hostReady();
     ok(await waitFor(async () => /en direct/.test(await ibar())), 'en direct au départ');
@@ -809,20 +965,20 @@ async function main() {
     await sleep(9000);
     ok(hits.stats === s3.stats && hits.head === s3.head && !/en direct/.test(await ibar()) && !/^\(\d+\) /.test(await page.title()), `plus de lecture, plus d’indicateur, titre « ${await page.title()} »`);
 
-    console.log('25. Réglages');
+    console.log('27. Réglages');
     await page.goto(`${SITE}/member/777`);
     await hostReady();
     await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length >= 20));
     await inPanel((sh) => {
-      for (const id of ['#opt-shipping', '#opt-titles']) {
+      for (const id of ['#opt-shipping', '#opt-titles', '#opt-cm']) {
         sh.querySelector(id).checked = false;
         sh.querySelector(id).dispatchEvent(new Event('change', { bubbles: true }));
       }
     });
-    ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length === 0)), 'affichages retirés quand les deux options sont décochées');
+    ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length === 0)), 'affichages retirés quand les trois options sont décochées');
     ok(hits.shipping <= 40, `${hits.shipping} lectures de frais d’envoi sur tout le parcours`);
 
-    console.log('26. Clic sur l’icône hors Cardmarket et Vinted : page d’explication');
+    console.log('28. Clic sur l’icône hors Cardmarket et Vinted : page d’explication');
     // Sans passer par le service de fond, qui s'endort pendant un parcours aussi long.
     const welcome = await browser.newPage();
     await welcome.goto(`chrome-extension://${extId}/src/accueil.html`);

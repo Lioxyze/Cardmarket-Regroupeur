@@ -6,6 +6,8 @@
  *      (paramètre item_ids[] de Vinted), sans faire défiler des centaines d'annonces.
  *   2. Sur les vignettes d'annonces : le nom de l'annonce (Vinted ne l'affiche pas) et le prix avec l'envoi
  *      (protection acheteurs + envoi le moins cher vers le compte connecté).
+ *   3. Sur les annonces de cartes : « Voir sur Cardmarket », avec la langue et l'état de l'annonce (src/compare.js,
+ *      chargé avant ce fichier ; sans lui, le lien n'apparaît simplement pas).
  *
  * Sobriété : rien n'est lu tant que le panneau n'est pas ouvert ; les prix d'envoi ne sont demandés que pour les
  * annonces visibles, une à la fois, gardés en mémoire 24 h ; dans un dressing, 3 lectures suffisent si le vendeur
@@ -324,7 +326,7 @@
       load: { state: 'idle' },
       wanted: new Set(), // articles cochés (page du vendeur) ou en attente d'ajout (page du lot)
       pageSel: new Set(), // articles déjà dans le lot affiché par Vinted
-      settings: { titles: true, shipping: true, live: true },
+      settings: { titles: true, shipping: true, live: true, cm: true },
       cmList: 0,
     };
 
@@ -437,11 +439,15 @@
       const link = el.querySelector('a[title]');
       const price = parseEuro((el.querySelector('[data-testid$="--price-text"]') || {}).textContent);
       const total = parseEuro((el.querySelector('[data-testid="total-combined-price"]') || {}).textContent);
+      const alt = (img && img.alt) || (link && link.title) || '';
+      // « …, marque: Pokémon, état: Très bon état, 4,99 €, … » : repli quand la vignette n'affiche pas ces lignes.
+      const field = (name) => ((alt.match(new RegExp(`, ${name} ?: ([^,]+)`, 'i')) || [])[1] || '').trim();
+      const line = (suffix) => ((el.querySelector(`[data-testid$="--description-${suffix}"]`) || {}).textContent || '').trim();
       return {
         id: cardId(el),
-        title: cardTitleFromAlt((img && img.alt) || (link && link.title) || ''),
-        brand: '',
-        status: ((el.querySelector('[data-testid$="--description-subtitle"]') || {}).textContent || '').trim(),
+        title: cardTitleFromAlt(alt),
+        brand: line('title') || field('marque'),
+        status: line('subtitle') || field('[ée]tat'),
         price: price || 0,
         total: total != null ? total : price != null ? Math.round((price * 1.05 + 0.7) * 100) / 100 : null,
         thumb: (img && img.src) || '',
@@ -582,9 +588,29 @@
       };
     }
 
+    // ---------- « Voir sur Cardmarket » ----------
+
+    const CM = root.CMRC || null;
+    const SELLER_LANG = 'cmrv.sellerLang'; // langue lue dans une annonce de ce vendeur, pour ses autres annonces
+    const sellerLang = (id) => (id && (ssGet(SELLER_LANG) || {})[id]) || 0;
+
+    // { href, d, text, tip } pour une annonce de carte, sinon null. Gardé en mémoire : la décoration repasse souvent.
+    const cmSeen = new Map();
+    function cmLink(a) {
+      if (!CM || !S.settings.cm) return null;
+      const key = [a.url, a.title, a.brand, a.status, a.price, a.total, a.shipping, a.sellerLang, (a.description || '').length].join('|');
+      if (cmSeen.has(key)) return cmSeen.get(key);
+      const d = CM.describeListing(a);
+      const href = d.ok ? CM.cardmarketUrl(d, a) : '';
+      const out = href ? { href, d, text: CM.summary(d), tip: CM.explain(d, a.status) } : null;
+      if (cmSeen.size > 3000) cmSeen.clear();
+      cmSeen.set(key, out);
+      return out;
+    }
+
     function decorate() {
       if (dead) return;
-      const on = S.settings.titles || S.settings.shipping;
+      const on = S.settings.titles || S.settings.shipping || (S.settings.cm && !!CM);
       // Page d'un lot : l'envoi n'est payé qu'une fois, il est compté dans l'estimation du panneau.
       const showShip = S.settings.shipping && S.ctx.kind !== 'bundle';
       for (const el of cardEls()) {
@@ -597,7 +623,9 @@
         const info = showShip ? shipFor(card.id) : null;
         if (showShip && !info && visible(el)) wantShip(card.id);
         const line = shipLine(card, info);
-        const key = `${S.settings.titles ? card.title : ''}|${line ? line.text : ''}`;
+        const send = info && info.kind === 'price' ? info.amount : info && info.kind === 'free' ? 0 : null;
+        const cmk = cmLink({ title: card.title, brand: card.brand, status: card.status, description: '', price: card.price, total: card.total, shipping: send, url: `/items/${card.id}`, sellerLang: sellerLang(S.ctx.sellerId) });
+        const key = `${S.settings.titles ? card.title : ''}|${line ? line.text : ''}|${cmk ? cmk.href : ''}`;
         if (lab && lab.dataset.k === key) continue;
         if (!lab) {
           lab = doc.createElement('div');
@@ -622,8 +650,77 @@
           p.style.cssText = 'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;opacity:.9;';
           lab.appendChild(p);
         }
+        if (cmk) {
+          const a = doc.createElement('a');
+          a.setAttribute('data-cmrv-cm', '');
+          a.className = 'cmrv-cm';
+          a.href = cmk.href;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          a.textContent = 'Cardmarket ↗';
+          a.title = `Voir cette carte sur Cardmarket — ${cmk.text}. ${cmk.tip}`;
+          a.addEventListener('click', (e) => e.stopPropagation()); // la vignette ne doit pas s'ouvrir en même temps
+          lab.appendChild(a);
+        }
       }
       decorateItemPage();
+      decorateItemCompare();
+    }
+
+    // Page d'une annonce : bouton « Voir sur Cardmarket », avec la langue et l'état lus dans l'annonce.
+    function decorateItemCompare() {
+      const old = doc.querySelector('[data-cmrv-cmbtn]');
+      const box = S.ctx.kind === 'item' ? doc.querySelector('[data-testid="item-sidebar-price-container"]') : null;
+      const text = (sel) => ((doc.querySelector(sel) || {}).textContent || '').trim();
+      let k = null;
+      if (box) {
+        const summary = doc.querySelector('[data-testid="item-page-summary-plugin"]');
+        const total = parseEuro(text('[data-testid="item-sidebar-price-container"] [data-testid="total-combined-price"]'));
+        const price = parseEuro(text('[data-testid="item-price"]'));
+        const banner = doc.querySelector('[data-testid="item-shipping-banner-price"]');
+        // Lien vers le profil du vendeur (hors bandeau du site, qui pointe vers le compte connecté).
+        const sellerId = [...doc.querySelectorAll('a[href^="/member/"]')]
+          .filter((x) => !x.closest('header'))
+          .map((x) => (x.getAttribute('href').match(/^\/member\/(\d+)/) || [])[1])
+          .find(Boolean) || '';
+        k = cmLink({
+          title: text('[data-testid="item-page-summary-plugin"] h1') || text('h1'),
+          description: (doc.querySelector('[itemprop="description"]') || {}).textContent || '',
+          status: text('[data-testid="item-attributes-status"] [itemprop="status"]'),
+          brand: summary ? summary.textContent : '',
+          price: price != null ? price : null,
+          total: total != null ? total : price != null ? Math.round((price * 1.05 + 0.7) * 100) / 100 : null,
+          shipping: banner ? parseEuro(banner.textContent) : null,
+          url: loc.pathname,
+          sellerLang: sellerLang(sellerId),
+        });
+        // Langue lue sans ambiguïté : elle servira aux autres annonces de ce vendeur, qui n'ont que leur titre.
+        if (k && sellerId && k.d.lang.sure && k.d.lang.from !== 'vendeur') {
+          const known = ssGet(SELLER_LANG) || {};
+          if (known[sellerId] !== k.d.lang.id) ssSet(SELLER_LANG, Object.assign(known, { [sellerId]: k.d.lang.id }));
+        }
+      }
+      if (!k) {
+        if (old) old.remove();
+        return;
+      }
+      if (old && old.dataset.k === k.href && old.parentElement === box) return;
+      if (old) old.remove();
+      const a = doc.createElement('a');
+      a.setAttribute('data-cmrv-cmbtn', '');
+      a.className = 'cmrv-cmbtn';
+      a.dataset.k = k.href;
+      a.href = k.href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = k.tip;
+      const b = doc.createElement('b');
+      b.textContent = 'Voir sur Cardmarket ↗';
+      const small = doc.createElement('span');
+      small.textContent = k.text;
+      a.appendChild(b);
+      a.appendChild(small);
+      box.appendChild(a);
     }
 
     // Page d'une annonce : Vinted affiche l'envoi à part ; on l'additionne.
@@ -805,6 +902,7 @@
         <div class="opts">
           <label><input type="checkbox" id="opt-shipping" /> Prix avec envoi sous les annonces</label>
           <label><input type="checkbox" id="opt-titles" /> Nom de l’annonce sous les annonces</label>
+          <label><input type="checkbox" id="opt-cm" /> Lien « Cardmarket » sur les annonces de cartes</label>
           <label><input type="checkbox" id="opt-live" /> Messages en direct (messagerie, pastille, titre de l’onglet)</label>
         </div>
       </section>`;
@@ -921,6 +1019,7 @@
       $('#hint').hidden = seller;
       $('#opt-shipping').checked = S.settings.shipping;
       $('#opt-titles').checked = S.settings.titles;
+      $('#opt-cm').checked = S.settings.cm;
       $('#opt-live').checked = S.settings.live;
       if (!seller) return;
       for (const b of sh.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.mode === S.mode);
@@ -973,7 +1072,7 @@
       if (t.id === 'sort') {
         S.sort = t.value;
         renderResults();
-      } else if (t.id === 'opt-shipping' || t.id === 'opt-titles' || t.id === 'opt-live') {
+      } else if (t.id === 'opt-shipping' || t.id === 'opt-titles' || t.id === 'opt-live' || t.id === 'opt-cm') {
         S.settings[t.id.slice(4)] = t.checked;
         csSet({ 'cmrv.settings': S.settings });
         decorate();
@@ -1033,6 +1132,11 @@
       [data-cmrv-flash]{animation:cmrv-flash 2.4s ease-out}
       @keyframes cmrv-flash{from{background-color:rgba(18,161,80,.5)}}
       @media (prefers-reduced-motion:reduce){[data-cmrv-flash]{animation:none}}
+      .cmrv-cm{position:relative;z-index:2;display:inline-block;margin-top:2px;color:#007782;font-weight:600;text-decoration:none}
+      .cmrv-cm:hover{text-decoration:underline}
+      .cmrv-cmbtn{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;margin-top:10px;padding:8px 12px;border:1px solid #007782;border-radius:8px;color:#007782;font-size:14px;line-height:1.3;text-decoration:none}
+      .cmrv-cmbtn:hover{background:rgba(0,119,130,.08)}
+      .cmrv-cmbtn span{font-size:12px;opacity:.85}
       .cmrv-live{font-style:normal;font-size:12px;opacity:.75;white-space:nowrap}
       .cmrv-live.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#1a9c5b;vertical-align:1px}
       .cmrv-live.new{opacity:1;font-weight:600;color:#007782}
@@ -2056,7 +2160,7 @@
       live.prefix = '';
       ship.queue = [];
       ship.queued.clear();
-      for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act],[data-cmrv-new]')) el.remove();
+      for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act],[data-cmrv-new],[data-cmrv-cmbtn]')) el.remove();
       for (const el of doc.querySelectorAll('[data-cmrv-fresh],[data-cmrv-flash]')) {
         el.removeAttribute('data-cmrv-fresh');
         el.removeAttribute('data-cmrv-flash');
