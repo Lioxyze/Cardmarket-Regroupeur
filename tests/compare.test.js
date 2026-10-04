@@ -25,9 +25,20 @@ test('carte : recherches de la plus précise à la plus large', () => {
   assert.deepEqual(C.queriesFor('Gribouraigne', '297/190'), ['Gribouraigne 297', 'Gribouraigne']);
   // « ex », « V »… retirés : Cardmarket écrit tantôt « -ex », tantôt « ex » ; le numéro départage
   assert.deepEqual(C.queriesFor('Dracaufeu ex', '006/165'), ['Dracaufeu 006', 'Dracaufeu']);
-  assert.deepEqual(C.queriesFor('Morpheo Forme Solaire', '067/064'), ['Morpheo Forme Solaire 067', 'Morpheo 067', 'Morpheo Forme Solaire', 'Morpheo']);
+  assert.deepEqual(C.queriesFor('Morpheo Forme Solaire', '067/064'), ['Morpheo Forme Solaire 067', 'Morpheo Forme Solaire', 'Morpheo 067', 'Morpheo']);
   assert.deepEqual(C.queriesFor('Dracaufeu', ''), ['Dracaufeu']);
   assert.deepEqual(C.queriesFor('M. Mime', '080/203'), ['M. Mime 080', 'M. Mime']); // « M. » seul ne se cherche pas
+});
+
+test('nom anglais lu dans l’adresse d’une fiche Cardmarket', () => {
+  const e = (slug) => C.englishFromKey('Pokemon/Products/Singles/' + slug);
+  assert.equal(e('Paldean-Fates/Coalossal-V1-PAF148'), 'Coalossal');
+  assert.equal(e('Legendary-Collection/Machop-LC79'), 'Machop');
+  assert.equal(e('Obsidian-Flames/Charizard-ex-V2-OBF215'), 'Charizard ex');
+  assert.equal(e('Shiny-Treasure-ex/Coalossal-sv4a268'), 'Coalossal');
+  assert.equal(e('151/Mr-Mime-V1-MEW122'), 'Mr Mime');
+  assert.equal(e('Promos/Pikachu'), ''); // pas de code : rien à en tirer
+  assert.equal(C.englishFromKey(''), '');
 });
 
 test('annonces écartées : lots, objets qui ne sont pas des cartes, autres marques', () => {

@@ -221,10 +221,20 @@
     const num = number ? number.split('/')[0] : '';
     const out = [];
     if (num) out.push(`${base} ${num}`);
-    if (num && short) out.push(`${short} ${num}`);
     out.push(base);
+    if (num && short) out.push(`${short} ${num}`);
     if (short) out.push(short);
     return [...new Set(out)].slice(0, 4);
+  }
+
+  /**
+   * Nom anglais d'une carte, lu dans l'adresse de sa fiche Cardmarket (les adresses sont en anglais quelle que soit
+   * la langue du site) : « …/Paldean-Fates/Coalossal-V1-PAF148 » → « Coalossal ».
+   */
+  function englishFromKey(key) {
+    const slug = String(key || '').split('/').pop() || '';
+    const name = slug.replace(/(?:-V\d+)?-[A-Za-z]*\d+[A-Za-z0-9]*$/, '');
+    return name && name !== slug ? clean(name.replace(/-/g, ' ')) : '';
   }
 
   /**
@@ -331,6 +341,8 @@
       tp: num(v.tp), // avec la protection acheteurs
       sh: num(v.sh), // envoi (absent : inconnu)
       u: /^\/items\/\d{1,15}$/.test(str(v.u, 40)) ? v.u : '', // annonce d'origine
+      en: v.en ? 1 : 0, // recherche par le nom anglais déjà tentée
+      lo: /^[a-z]{2}$/.test(str(v.lo, 2)) ? v.lo : '', // langue du site à retrouver après une recherche en anglais
       a: v.a ? 1 : 0, // filtres déjà posés sur la fiche
       d: v.d ? 1 : 0, // filtre de langue retiré faute d'offres
       h: Math.min(Math.max(parseInt(v.h, 10) || 0, 0), 9), // redirections déjà faites
@@ -470,7 +482,7 @@
       const c = condOf(mark.c);
       if (c && c.id > 1 && c.id < 7 && cm.productKind(k) === 'single') q.set('minCondition', String(c.id));
       const s = q.toString();
-      return cm.keyToUrl(k, here.locale) + (s ? '?' + s : '') + encodeMarker(mark);
+      return cm.keyToUrl(k, mark.lo || here.locale) + (s ? '?' + s : '') + encodeMarker(mark);
     };
     const go = (url, mark) => {
       write({ m: mark, pending: true, key: '' });
@@ -489,11 +501,21 @@
         const mark = Object.assign({}, m, { a: 1, h: m.h + 1 });
         return go(productUrl(sure.key, mark), mark);
       }
-      // Rien au bon numéro : recherche suivante, plus large (deux fois au plus).
       const matches = rank.candidates.filter((c) => m.num && c.detail && c.detail.number);
-      if (!matches.length && m.qi + 1 < m.qs.length && m.h < 2) {
-        const next = Object.assign({}, m, { qi: m.qi + 1, h: m.h + 1 });
-        return go(searchUrl(m.g, m.qs[next.qi], m.k).replace('/fr/', `/${here.locale}/`) + encodeMarker(next), next);
+      const search = (mark, locale) => go(searchUrl(mark.g, mark.qs[mark.qi], mark.k).replace('/fr/', `/${locale}/`) + encodeMarker(mark), mark);
+      // Rien au bon numéro : trois recherches de plus au maximum.
+      if (!matches.length && m.h < 3) {
+        // La carte existe sous ce nom, mais pas à ce numéro : Cardmarket ne range peut-être celle-ci que sous son
+        // nom anglais (extensions japonaises). Ce nom se lit dans l'adresse des fiches trouvées.
+        const base = (s) => norm(clean(String(s).replace(SUFFIX, '')));
+        const same = !m.en && m.num ? rank.candidates.find((c) => base(cm.searchableName(c.name)) === base(m.n)) : null;
+        const en = same ? englishFromKey(same.key) : '';
+        if (en && base(en) !== base(m.n)) {
+          const qs = [...new Set([`${clean(en.replace(SUFFIX, '')) || en} ${m.num.split('/')[0]}`, en])];
+          return search(Object.assign({}, m, { en: 1, lo: here.locale, n: en, qs, qi: 0, h: m.h + 1 }), 'en');
+        }
+        // Sinon : recherche suivante, plus large.
+        if (m.qi + 1 < m.qs.length) return search(Object.assign({}, m, { qi: m.qi + 1, h: m.h + 1 }), here.locale);
       }
       write({ m, pending: true, key: '' }); // le choix à la main garde la comparaison
       // Les liens des résultats mènent à la fiche déjà filtrée ; ceux au bon numéro sont mis en avant.
@@ -690,6 +712,7 @@
     conditionFor,
     parseCardTitle,
     queriesFor,
+    englishFromKey,
     describeListing,
     summary,
     explain,

@@ -275,6 +275,10 @@ const CM_ROWS = {
     ['Gribouraigne (PAF 003)', 'Destinees-de-Paldea/Gribouraigne-PAF003', '003'],
   ],
   'Dracaufeu 006': [['Dracaufeu-ex (sv2a 006)', 'Pokemon-Card-151/Dracaufeu-ex-sv2a006', '006']],
+  // Carte japonaise connue de Cardmarket sous son nom anglais seulement : le nom français ne trouve que la carte
+  // d'une autre extension, dont l'adresse donne le nom anglais (Coalossal).
+  Monthracite: [['Monthracite (PAF 148)', 'Paldean-Fates/Coalossal-V1-PAF148', '148']],
+  'Coalossal 268': [['Coalossal (sv4a 268)', 'Shiny-Treasure-ex/Coalossal-sv4a268', '268']],
   'Pikachu 025': [
     ['Pikachu (MEW 025)', '151/Pikachu-MEW025', '025'],
     ['Pikachu (sv2a 025)', 'Pokemon-Card-151/Pikachu-sv2a025', '025'],
@@ -285,18 +289,21 @@ const CM_ROWS = {
 const CM_OFFERS = {
   'Shiny-Treasure-ex/Gribouraigne-sv4a297': [['2,20 €', 'EX', 3, 'Japonais', 7, 'Allemagne'], ['2,50 €', 'NM', 2, 'Japonais', 7, 'France']],
   'Pokemon-Card-151/Dracaufeu-ex-sv2a006': [['30,00 €', 'NM', 2, 'Japonais', 7, 'France']],
+  'Shiny-Treasure-ex/Coalossal-sv4a268': [['3,00 €', 'NM', 2, 'Japonais', 7, 'France']],
   '151/Pikachu-MEW025': [['0,50 €', 'NM', 2, 'Français', 2, 'France'], ['0,30 €', 'NM', 2, 'Anglais', 1, 'France']],
 };
 function fakeCardmarket(url) {
   const shell = (title, sub, body) => `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${title} | Cardmarket</title></head><body style="font-family:sans-serif;padding:16px 440px 16px 16px">
     <main><div class="page-title-container"><h1>${title}<span> ${sub}</span></h1></div>${body}</main></body></html>`;
-  if (url.pathname === '/fr/Pokemon/Products/Search') {
+  const loc = (url.pathname.match(/^\/(fr|en)\//) || [])[1];
+  if (!loc) return null;
+  if (url.pathname === `/${loc}/Pokemon/Products/Search`) {
     const rows = (CM_ROWS[url.searchParams.get('searchString')] || []).map(([name, slug, num], i) => `<div id="productRow${100 + i}" class="row g-0" style="padding:6px">
-      <div data-testid="name"><a href="/fr/Pokemon/Products/Singles/${slug}">${name}</a></div><div data-testid="collector_number">${num}</div>
+      <div data-testid="name"><a href="/${loc}/Pokemon/Products/Singles/${slug}">${name}</a></div><div data-testid="collector_number">${num}</div>
       <div data-testid="availability">12</div><div data-testid="from_price">1,00 €</div></div>`);
     return shell('Rechercher', '', `<div class="table-body">${rows.join('')}</div>`);
   }
-  const m = url.pathname.match(/^\/fr\/Pokemon\/Products\/Singles\/([^/]+\/[^/]+)$/);
+  const m = url.pathname.match(/^\/(?:fr|en)\/Pokemon\/Products\/Singles\/([^/]+\/[^/]+)$/);
   if (!m || !CM_OFFERS[m[1]]) return null;
   const langs = (url.searchParams.get('language') || '').split(',').filter(Boolean).map(Number);
   const min = Number(url.searchParams.get('minCondition')) || 7;
@@ -601,7 +608,7 @@ async function main() {
       if (u.protocol === 'chrome-extension:') return req.continue();
       if (u.origin !== CM_SITE) return req.abort();
       const html = fakeCardmarket(u);
-      if (html) cmSeen.push(u.pathname.split('/').pop() + u.search);
+      if (html) cmSeen.push(u.pathname.split('/')[1] + ':' + u.pathname.split('/').pop() + u.search);
       return html ? req.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html }) : req.respond({ status: 404, body: '' });
     });
     const banner = () =>
@@ -636,6 +643,14 @@ async function main() {
     b = await banner();
     ok(at().pathname.endsWith('/Dracaufeu-ex-sv2a006') && at().search === '?minCondition=4' && /45,53 €/.test(b) && /≈ 33,50 €/.test(b) && /Cardmarket moins cher de ≈ 12,03 €/.test(b), `${at().search} — ${b}`);
     ok(cmSeen.length === 3, `3 pages : ${cmSeen.join(' → ')}`);
+
+    // Carte japonaise au titre français, que Cardmarket ne connaît que sous son nom anglais.
+    const listing4 = { title: 'Monthracite – 268/190', brand: 'Pokémon', status: 'Très bon état', description: 'Carte japonaise' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing4), { title: listing4.title, status: listing4.status, price: 2.99, total: 3.84, shipping: 2.83, url: '/items/125' })).catch(() => {});
+    ok(await waitFor(async () => /sur vinted/i.test(await banner()), 15000), 'nom français inconnu pour cette carte : retrouvée par son nom anglais, lu dans l’adresse d’une autre fiche');
+    ok(at().pathname === '/fr/Pokemon/Products/Singles/Shiny-Treasure-ex/Coalossal-sv4a268' && at().search === '?language=7&minCondition=3', `fiche ouverte sur le site en français : ${at().pathname.split('/').pop()}${at().search}`);
+    ok(cmSeen.length === 4 && /^en:Search\?searchString=Coalossal\+268/.test(cmSeen[2]), `4 pages : ${cmSeen.join(' → ')}`);
 
     // Deux cartes au même numéro : pas de choix automatique.
     const listing3 = { title: 'Pikachu 025/165 FR', brand: 'Pokémon', status: 'Très bon état', description: '' };
