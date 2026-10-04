@@ -383,7 +383,8 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
 
 Messages en direct, en détail : une conversation n'est relue que si tu es devant l'écran (fenêtre au premier plan
 et active, ou souris dans la page), car la relire la marque comme lue ; sinon seuls la pastille, le titre et la
-liste bougent, et le message s'affiche à ton retour. Cadence du compteur : 7 s avec une conversation ouverte, 15 s
+liste bougent, et le message s'affiche à ton retour. La conversation ouverte est relue toutes les 10 s quand tu es devant (ce qui montre aussi un
+message envoyé par toi depuis ton téléphone, que le compteur ne voit pas). Cadence du compteur : 15 s
 dans la messagerie, 60 s ailleurs, ralentie puis arrêtée sans activité (30 min) ; un seul onglet lit à la fois ;
 une baisse du compteur ne déclenche aucune requête ; la liste est relue au plus toutes les 30 s ; plafond de 700
 requêtes par heure. Si Vinted change son code, l'indicateur le dit et propose « Actualiser ».

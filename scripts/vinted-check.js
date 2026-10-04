@@ -533,7 +533,7 @@ async function main() {
     await sleep(2500);
     const c0 = { conv: hits.conv, inbox: hits.inbox, stats: hits.stats };
     receive(104, 'Oui, toujours disponible !');
-    ok(await waitFor(async () => (await msgs()) === 3, 12000), 'le nouveau message apparaît tout seul, sans recharger');
+    ok(await waitFor(async () => (await msgs()) === 3, 18000), 'le nouveau message apparaît tout seul, sans recharger');
     ok((await page.evaluate(() => document.querySelector('[data-testid="composer--input"]').value)) === 'brouillon en cours', 'le message en cours de saisie est conservé');
     ok(await waitFor(() => page.evaluate(() => {
       const box = document.querySelector('[data-testid="conversation-content"]');
@@ -541,7 +541,11 @@ async function main() {
     })), 'le fil reste en bas, sur le nouveau message');
     ok(await waitFor(async () => /Messages 0$/.test(await badge()), 6000), `la pastille revient à 0 aussitôt la conversation lue (${await badge()})`);
     await sleep(9000);
-    ok(hits.conv - c0.conv === 1 && hits.inbox === c0.inbox, `pour ce message : 1 lecture de la conversation, ${hits.inbox - c0.inbox} de la liste, ${hits.stats - c0.stats} du compteur`);
+    ok(hits.conv - c0.conv <= 3 && hits.inbox === c0.inbox, `en 12 s : ${hits.conv - c0.conv} lectures de la conversation, ${hits.inbox - c0.inbox} de la liste, ${hits.stats - c0.stats} du compteur`);
+    // Message envoyé par l'utilisateur depuis son téléphone : le compteur de non-lus ne bouge pas.
+    await here();
+    thread(104).push('Envoyé depuis mon téléphone');
+    ok(await waitFor(async () => (await msgs()) === 4, 14000), 'un message envoyé depuis un autre appareil apparaît aussi (conversation relue toutes les 10 s)');
 
     console.log('15. Messages en direct : nouveau message dans une autre conversation');
     await here();
@@ -549,12 +553,12 @@ async function main() {
     receive(105, 'Bonjour, je prends le lot');
     ok(await waitFor(async () => /^● emma — Bonjour, je prends le lot/.test(await rowText(105)), 50000), `la liste se met à jour : ${await rowText(105)}`);
     ok(await waitFor(async () => /Messages 1$/.test(await badge()) && /^\(1\) /.test(await page.title())), `pastille et titre de l’onglet : ${await badge()} ; « ${await page.title()} »`);
-    ok(hits.inbox - c1.inbox === 1 && hits.conv - c1.conv === 1 && (await msgs()) === 3, `une lecture de la liste, une de la conversation ouverte (${hits.inbox - c1.inbox}, ${hits.conv - c1.conv})`);
+    ok(hits.inbox - c1.inbox === 1 && (await msgs()) === 4, `une seule lecture de la liste (${hits.inbox - c1.inbox})`);
     ok(!(await page.evaluate(() => window.refetches.includes('inbox-conversations'))), 'les requêtes que Vinted a désactivées ne sont pas relancées');
     await sleep(3000);
     const quiet = { stats: hits.stats, inbox: hits.inbox, conv: hits.conv };
     await sleep(15000);
-    ok(hits.stats - quiet.stats >= 1 && hits.stats - quiet.stats <= 3 && hits.inbox === quiet.inbox && hits.conv === quiet.conv, `au repos, en 15 s : ${hits.stats - quiet.stats} lectures du compteur, aucune autre requête`);
+    ok(hits.stats - quiet.stats >= 1 && hits.stats - quiet.stats <= 3 && hits.inbox === quiet.inbox && hits.conv - quiet.conv <= 2, `au repos, en 15 s : ${hits.stats - quiet.stats} lectures du compteur, ${hits.conv - quiet.conv} de la conversation, aucune de la liste`);
     await shot('direct');
 
     console.log('16. Onglet caché : rien n’est relu, puis rattrapage au retour');
@@ -565,9 +569,9 @@ async function main() {
       const c2 = hits.conv;
       receive(104, 'Tu es là ?');
       await sleep(9000);
-      ok(hits.conv === c2 && (await msgs()) === 3, 'onglet caché : la conversation n’est pas relue (elle serait marquée lue sans avoir été vue)');
+      ok(hits.conv === c2 && (await msgs()) === 4, 'onglet caché : la conversation n’est pas relue (elle serait marquée lue sans avoir été vue)');
       await page.bringToFront();
-      ok(await waitFor(async () => (await msgs()) === 4, 12000), 'retour sur l’onglet : le message apparaît');
+      ok(await waitFor(async () => (await msgs()) === 5, 12000), 'retour sur l’onglet : le message apparaît');
     }
     await other.close();
     await page.bringToFront();
@@ -580,7 +584,7 @@ async function main() {
     const i1 = hits.inbox;
     const before102 = await rowText(102);
     receive(102, 'Encore disponible ?');
-    ok(await waitFor(async () => /nouveau message/.test(await ibar()), 14000), `prévenu, sans rien déplacer : ${(await ibar()).replace(/\n/g, ' | ')}`);
+    ok(await waitFor(async () => /nouveau message/.test(await ibar()), 24000), `prévenu, sans rien déplacer : ${(await ibar()).replace(/\n/g, ' | ')}`);
     await sleep(4000);
     ok(hits.inbox === i1 && (await rowText(102)) === before102, 'liste intacte tant que la sélection est en cours');
     await press('[data-cmrv-act="delsel"]');
@@ -674,11 +678,11 @@ async function main() {
     await sleep(2000);
     BOX.fail = true;
     const s5 = hits.stats;
+    await page.evaluate(() => window.ageCache());
+    ok(await waitFor(async () => /lecture impossible/.test(await ibar()), 26000), `indicateur honnête dès le premier échec : ${(await ibar()).replace(/\n/g, ' | ')}`);
     const c5 = { conv: hits.conv, inbox: hits.inbox };
     await page.evaluate(() => window.ageCache());
-    ok(await waitFor(async () => /lecture impossible/.test(await ibar()), 14000), `indicateur honnête dès le premier échec : ${(await ibar()).replace(/\n/g, ' | ')}`);
-    await page.evaluate(() => window.ageCache());
-    ok(await waitFor(async () => hits.stats - s5 === 2, 30000), 'un second essai, deux fois plus tard');
+    ok(await waitFor(async () => hits.stats - s5 === 2, 45000), 'un second essai, deux fois plus tard');
     await sleep(12000);
     ok(hits.stats - s5 === 2 && hits.conv === c5.conv && hits.inbox === c5.inbox, `puis silence : ${hits.stats - s5} lectures du compteur, aucune relecture de la messagerie`);
     BOX.fail = false;

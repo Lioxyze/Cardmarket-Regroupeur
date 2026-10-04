@@ -1,6 +1,6 @@
 {
   "name": "cardmarket-regroupeur",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "description": "Extension navigateur : regrouper ses achats Cardmarket chez le moins de vendeurs possible.",
   "scripts": {

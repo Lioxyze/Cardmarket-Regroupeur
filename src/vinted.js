@@ -1291,6 +1291,8 @@
       jitter: 1,
       listAt: started, // dernière relecture de la liste
       lastRefresh: started,
+      safetyAt: started, // dernier filet de sécurité
+      pulseAt: started, // prochaine relecture régulière de la conversation ouverte : pas avant
       lastVisible: started,
       visibleAt: 0,
       lastActive: started, // dernier signe de présence (saisie, souris, retour sur la fenêtre)
@@ -1601,7 +1603,22 @@
 
     // Filet de sécurité, utilisateur présent : ce que le compteur ne voit pas (2ᵉ message d'une conversation déjà non
     // lue, message envoyé depuis un autre appareil). Passe silencieuse, sauf pour suivre un message arrivé.
+    // Conversation ouverte et utilisateur devant : relue toutes les 10 s. Le compteur ne voit pas tout — un message
+    // envoyé par l'utilisateur depuis son téléphone, par exemple, ne le fait pas bouger.
+    async function conversationPulse() {
+      const conv = openConv();
+      const before = convView();
+      const t0 = Date.now();
+      const res = await callRefresh({ conversation: conv, convSince: t0 - 8000 });
+      // Requête de Vinted introuvable ou en erreur : on n'insiste pas, nouvel essai dans une minute.
+      live.pulseAt = t0 + (res.conv === 'ok' || res.conv === 'fresh' || res.conv === 'busy' ? 10000 : MINUTE);
+      if (res.conv !== 'ok') return;
+      if (openConv() === conv && !inbox.busy) follow(before);
+      await rereadIfSent(conv, t0);
+    }
+
     async function safetyPass() {
+      live.safetyAt = Date.now();
       const conv = openConv();
       const before = convView();
       const t0 = Date.now();
@@ -1751,7 +1768,8 @@
           live.navAt = 0;
           return void step(() => afterNavigation(watched));
         }
-        if (watched && now - live.lastRefresh > 3 * MINUTE) return void step(safetyPass);
+        if (watched && now - live.safetyAt > 3 * MINUTE) return void step(safetyPass);
+        if (watched && openConv() && now >= live.pulseAt) return void step(conversationPulse);
       }
       if (live.navAt && now - live.navAt > 30000) live.navAt = 0;
       if (inboxPage) live.pendingToast = false;
@@ -1762,7 +1780,7 @@
 
       // 2. Lire le compteur quand c'est le moment.
       if (live.busy || live.refreshing || now < live.retryAt || overBudget()) return;
-      let every = liveInterval({ inbox: inboxPage, conv: !!openConv(), visible: vis, idleMs, hiddenMs: now - live.lastVisible });
+      let every = liveInterval({ inbox: inboxPage, conv: !!openConv() && !watched, visible: vis, idleMs, hiddenMs: now - live.lastVisible });
       if (!every) return;
       every *= (live.errors ? 2 : 1) * live.jitter;
       const last = Math.max(live.t, s.t);
