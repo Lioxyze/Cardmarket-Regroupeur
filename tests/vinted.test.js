@@ -166,7 +166,7 @@ test('direct : seule une hausse du compteur déclenche une relecture', () => {
 });
 
 test('direct : tête de liste, cadence et changements', () => {
-  assert.equal(V.liveHeadInterval(0), 3000); // utilisateur actif
+  assert.equal(V.liveHeadInterval(0), 2500); // utilisateur actif
   assert.equal(V.liveHeadInterval(3 * MIN), 6000);
   assert.equal(V.liveHeadInterval(10 * MIN), 20000);
   assert.equal(V.liveHeadInterval(20 * MIN), MIN);

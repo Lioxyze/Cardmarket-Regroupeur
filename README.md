@@ -381,13 +381,19 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
   de Vinted avec ses propres boutons (détails → « Supprimer la conversation » → « Oui, supprimer ») ; les
   conversations que Vinted ne permet pas de supprimer (commande en cours) sont signalées et laissées.
 
-Messages en direct, en détail : une conversation n'est relue que si tu es devant l'écran (fenêtre au premier plan
-et active, ou souris dans la page), car la relire la marque comme lue ; sinon seuls la pastille, le titre et la
-liste bougent, et le message s'affiche à ton retour. La conversation ouverte est relue toutes les 10 s quand tu es devant (ce qui montre aussi un
-message envoyé par toi depuis ton téléphone, que le compteur ne voit pas). Cadence du compteur : 15 s
-dans la messagerie, 60 s ailleurs, ralentie puis arrêtée sans activité (30 min) ; un seul onglet lit à la fois ;
-une baisse du compteur ne déclenche aucune requête ; la liste est relue au plus toutes les 30 s ; plafond de 700
-requêtes par heure. Si Vinted change son code, l'indicateur le dit et propose « Actualiser ».
+Messages en direct, en détail : dans la messagerie, l'extension lit toutes les 2,5 s environ (utilisateur actif,
+onglet visible) la « tête de liste », c'est-à-dire la conversation la plus récente (une requête de 4 Ko). Elle
+change dès qu'un message arrive ou part, y compris un message envoyé depuis un autre appareil. Si c'est la
+conversation ouverte, Vinted la relit ; sinon il relit sa liste, et la ligne reçoit une pastille « nouveau
+message » (Vinted ne met qu'un fond discret). Une conversation n'est relue que si tu es devant l'écran (fenêtre
+active, ou souris dans la page), car la relire la marque comme lue. La cadence ralentit sans activité (6 s après
+2 min, 20 s après 5 min, arrêt après 30 min) ; le compteur de non-lus n'est plus lu que toutes les 30 s, pour la
+pastille du bandeau et le titre de l'onglet ; plafond de 1 800 requêtes par heure. Hors messagerie : compteur
+toutes les 60 s. Si Vinted ne sert plus la tête de liste, l'extension retombe sur le compteur seul ; si son code
+change, l'indicateur le dit et propose « Actualiser ».
+
+Vinted n'envoie au navigateur ni indicateur « en train d'écrire » ni notification en temps réel (aucun canal de
+ce type dans sa version web) : l'extension ne peut donc pas l'afficher.
 
 Un refus de Vinted (403 / 429) met en pause **toutes** les lectures de l'extension (direct, prix d'envoi,
 dressing) pendant 10 minutes, dans tous les onglets, même après un rechargement.

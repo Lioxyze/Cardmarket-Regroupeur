@@ -169,9 +169,9 @@
 
   // Délai entre deux lectures de la « tête de liste » de la messagerie (sa conversation la plus récente, 4 Ko), en
   // ms ; 0 = ne pas lire. Elle change dès qu'un message arrive ou part, dans n'importe quelle conversation.
-  //   utilisateur actif depuis moins de 2 min : 3 s ; jusqu'à 5 min : 6 s ; 15 min : 20 s ; 30 min : 60 s ; puis arrêt
+  //   utilisateur actif depuis moins de 2 min : 2,5 s ; jusqu'à 5 min : 6 s ; 15 min : 20 s ; 30 min : 60 s ; puis arrêt
   function liveHeadInterval(idleMs) {
-    return idleMs < 2 * MINUTE ? 3000 : idleMs < 5 * MINUTE ? 6000 : idleMs < 15 * MINUTE ? 20000 : idleMs < 30 * MINUTE ? MINUTE : 0;
+    return idleMs < 2 * MINUTE ? 2500 : idleMs < 5 * MINUTE ? 6000 : idleMs < 15 * MINUTE ? 20000 : idleMs < 30 * MINUTE ? MINUTE : 0;
   }
 
   // Ce qui a changé entre deux lectures de la tête de liste ({ id, at, unread }) :
@@ -308,6 +308,7 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
     let timer = 0;
+    let liveTimer = 0; // boucle du direct, plus fine que celle des décorations
     let dead = false; // l'extension a été rechargée : cette copie du script ne doit plus rien faire
     const S = {
       ctx: { kind: 'other' },
@@ -1859,7 +1860,7 @@
       //    liste ne doit pas bouger sous le curseur), ni après une lecture du compteur en échec.
       //    Après une pause, une lecture du compteur (légère) doit d'abord avoir réussi, dans cet onglet ou un autre.
       const tested = Math.max(live.t, s.t) >= live.pausedAt;
-      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && tested && !inbox.select && !inbox.armed && now - live.lastRefresh > 2000 && !overBudget()) {
+      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && tested && !inbox.select && !inbox.armed && now - live.lastRefresh > 1500 && !overBudget()) {
         if (live.convDirty && !openConv()) live.convDirty = false;
         if (live.convDirty && watched) return void step(showNewInConversation);
         // Liste courte : relue tout de suite (2 requêtes au plus) ; liste longue : au plus toutes les 30 s.
@@ -1959,6 +1960,7 @@
     function shutdown() {
       dead = true;
       clearInterval(timer);
+      clearInterval(liveTimer);
       if (live.prefix && doc.title.startsWith(live.prefix)) doc.title = doc.title.slice(live.prefix.length);
       live.prefix = '';
       ship.queue = [];
@@ -1976,7 +1978,6 @@
       ensureSearchBar();
       const bar = doc.querySelector('[data-cmrv-bar]');
       $('.launch').hidden = S.open || !!(bar && visible(bar));
-      liveTick();
       decorateInbox();
       decorate();
       if (S.load.state === 'blocked' || S.load.state === 'error') if (harvestDom() && S.open) renderAll();
@@ -2012,6 +2013,10 @@
       onNav();
       if (ui.open && S.ctx.sellerId) setOpen(true);
       timer = setInterval(tick, 800);
+      // Le direct a sa propre boucle, plus serrée : le délai d'affichage d'un message en dépend.
+      liveTimer = setInterval(() => {
+        if (!dead && S.href) liveTick();
+      }, 300);
       tick();
     })();
   }
