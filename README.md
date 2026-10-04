@@ -416,9 +416,17 @@ Voir sur Cardmarket, en détail (`src/compare.js`, chargé sur les deux sites) :
 - **À l'arrivée sur Cardmarket** : la recherche part avec le nom et le numéro ; la carte qui porte ce numéro est
   ouverte toute seule, filtres langue et état posés (si plusieurs cartes ont ce numéro, elles sont encadrées et tu
   choisis). Si la langue n'était que supposée et qu'aucune offre n'existe dans cette langue, le filtre est retiré.
+  Si Cardmarket connaît la carte sous ce nom mais pas à ce numéro, il ne la range peut-être que sous son nom
+  anglais (extensions japonaises) : ce nom est lu dans l'adresse d'une autre fiche du même Pokémon et la recherche
+  est refaite avec lui. Quatre recherches au plus s'enchaînent toutes seules ; au-delà, le bandeau te laisse
+  choisir.
 - **Le bandeau** : prix Vinted (protection et envoi compris) à côté de l'offre Cardmarket la moins chère port
   compris (mêmes estimations de port que le reste de l'extension), l'écart, et des boutons pour changer de langue
   ou d'état en un clic. Quand l'envoi Vinted n'est pas connu, les deux prix sont comparés hors envoi.
+
+L'arrivée sur Cardmarket est testée sur un faux Cardmarket (`npm run vinted-check`) : la façon dont le vrai site
+répond à une recherche « nom français + numéro » n'a pas pu être vérifiée automatiquement (sa protection contre
+les robots bloque les navigateurs de test). Si une carte n'est pas trouvée, le bandeau le dit et laisse choisir.
 
 Aucune requête n'est faite en arrière-plan : seules les pages que tu vois sont chargées (une recherche, puis la
 fiche). Ce que l'annonce a appris voyage dans le fragment de l'adresse (`#cmrv=…`), qui n'est pas envoyé à
