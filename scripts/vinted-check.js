@@ -573,6 +573,17 @@ async function main() {
         c.checked = v;
         c.dispatchEvent(new Event('change', { bubbles: true }));
       }, on);
+    // Dans les résultats du panneau aussi.
+    await inPanel((sh) => sh.querySelector('.panel').hidden || sh.querySelector('[data-act="toggle"].x').click());
+    await page.evaluate(() => document.querySelector('[data-cmrv-bar]').click());
+    await waitFor(async () => /^300 articles/.test(await text('#status')), 15000);
+    await type('#q', 'salameche 008');
+    const inRow = await inPanel((sh) => {
+      const a = sh.querySelector('#results .it a.cm');
+      return a ? { href: a.href, target: a.target, text: a.textContent } : null;
+    });
+    ok(inRow && inRow.target === '_blank' && /searchString=Salam%C3%A8che\+008/.test(inRow.href), `résultats du panneau : ${inRow ? inRow.text : 'pas de lien'}`);
+    await inPanel((sh) => sh.querySelector('.panel').hidden || sh.querySelector('[data-act="toggle"].x').click());
     await setCm(false);
     ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-cm]').length === 0)), 'réglage décoché : plus de lien');
     await setCm(true);

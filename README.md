@@ -4,7 +4,8 @@ Extension navigateur pour acheter des cartes plus simplement sur deux sites :
 
 - **Cardmarket** : le meilleur plan d'achat pour une liste de cartes (voir ci-dessous) ;
 - **Vinted** : recherche dans le dressing d'un vendeur, lot prérempli, prix avec envoi sous les annonces,
-  suppression de conversations (voir [Vinted](#vinted)).
+  « Voir sur Cardmarket » pour comparer le prix d'une carte, messages en direct, suppression de conversations
+  (voir [Vinted](#vinted)).
 
 Un clic sur l'icône de l'extension ouvre son panneau sur ces deux sites ; ailleurs, il ouvre une page qui explique
 ce qu'elle fait sur chacun.
@@ -369,6 +370,9 @@ Sur `www.vinted.fr`, la même extension ajoute ce qui manque au site quand on ac
   compte connecté (en orange à partir de 4 € d'envoi), y compris sur la page d'accueil et dans les résultats de
   recherche. Même ligne sous le prix sur la page d'une annonce, et estimation du total du lot dans le panneau.
 - **Nom de l'annonce** sous chaque vignette (Vinted ne l'affiche pas).
+- **Voir sur Cardmarket.** Sur la page d'une annonce de carte, un bouton sous le prix ; sous les vignettes et dans
+  les résultats du panneau, un lien « Cardmarket ↗ ». Il ouvre Cardmarket sur la même carte, avec **la langue et
+  l'état de l'annonce**, et un bandeau y compare les deux prix (détail ci-dessous). Se désactive en bas du panneau.
 - **Messages en direct.** La messagerie web de Vinted ne se rafraîchit jamais toute seule (relectures
   automatiques désactivées dans son code). L'extension lit régulièrement le compteur de messages non lus — la
   requête de la pastille du bandeau, quelques octets — et, quand il augmente, demande à Vinted de relire avec son
@@ -398,6 +402,27 @@ bandeau et le titre de l'onglet. Plafond de 1 800 requêtes par heure : quand il
 ralentit pour étaler ce qui reste sur la fin de l'heure, au lieu de tout couper. Hors messagerie : compteur toutes
 les 60 s. Si Vinted ne sert plus la tête de liste (ou la refuse deux fois), l'extension retombe sur le compteur
 seul ; si son code change, l'indicateur le dit et propose « Actualiser ».
+
+Voir sur Cardmarket, en détail (`src/compare.js`, chargé sur les deux sites) :
+
+- **La carte** : nom et numéro lus dans le titre (« Carte Pokémon Tokotoro 065/64 SV6a JP – Illustration rare »
+  → Tokotoro, n° 065). Les lots et les objets qui ne sont pas des cartes n'ont pas de lien.
+- **La langue** : lue dans le titre, sinon dans la description (« japonaise », « JP », « 🇯🇵 », « VF », « (EN) »,
+  codes d'extension comme EV4.5 ou SV6a…). Sous les vignettes, où la description n'est pas visible, la langue lue
+  sur une annonce déjà ouverte du même vendeur est reprise. Sans indice : français supposé, et c'est écrit.
+- **L'état** : celui du menu de Vinted, traduit dans l'échelle de Cardmarket — Neuf → Near Mint, Très bon état →
+  Excellent, Bon état → Good, Satisfaisant → Light Played — sauf si le vendeur écrit lui-même « NM », « near
+  mint », « played »… Le filtre veut dire « cet état ou mieux ». Carte gradée (PSA 10…) : pas de filtre d'état.
+- **À l'arrivée sur Cardmarket** : la recherche part avec le nom et le numéro ; la carte qui porte ce numéro est
+  ouverte toute seule, filtres langue et état posés (si plusieurs cartes ont ce numéro, elles sont encadrées et tu
+  choisis). Si la langue n'était que supposée et qu'aucune offre n'existe dans cette langue, le filtre est retiré.
+- **Le bandeau** : prix Vinted (protection et envoi compris) à côté de l'offre Cardmarket la moins chère port
+  compris (mêmes estimations de port que le reste de l'extension), l'écart, et des boutons pour changer de langue
+  ou d'état en un clic. Quand l'envoi Vinted n'est pas connu, les deux prix sont comparés hors envoi.
+
+Aucune requête n'est faite en arrière-plan : seules les pages que tu vois sont chargées (une recherche, puis la
+fiche). Ce que l'annonce a appris voyage dans le fragment de l'adresse (`#cmrv=…`), qui n'est pas envoyé à
+Cardmarket et quitte la barre d'adresse dès qu'il est lu.
 
 Vinted n'envoie au navigateur ni indicateur « en train d'écrire » ni notification en temps réel (aucun canal de
 ce type dans sa version web) : l'extension ne peut donc pas l'afficher.

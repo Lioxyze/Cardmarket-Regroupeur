@@ -284,6 +284,8 @@
     .it .t { font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
     .it .m { color: var(--ink-2); font-size: 12px; }
     .it .m b { color: var(--ink); }
+    .it .m a.cm { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+    .it .m a.cm:hover { text-decoration: underline; }
     .tag { display: inline-block; padding: 0 5px; border-radius: 4px; background: var(--warn-soft); color: var(--warn); font-size: 11px; }
     .it .bt { display: flex; flex-direction: column; gap: 4px; flex: none; }
     .btn { padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); font-size: 12px; white-space: nowrap; }
@@ -914,10 +916,14 @@
       const bundle = S.ctx.kind === 'bundle';
       const label = inLot ? '✓ Dans le lot' : pending ? (bundle ? '✓ À ajouter' : '✓ Dans le lot') : '+ Lot';
       const price = `<b>${esc(euro(it.price))}</b>${it.total != null ? ` · ${esc(euro(it.total))} incl.` : ''}`;
+      const info = shipFor(it.id);
+      const send = info && info.kind === 'price' ? info.amount : info && info.kind === 'free' ? 0 : null;
+      const cmk = cmLink({ title: it.title, brand: it.brand, status: it.status, description: '', price: it.price, total: it.total, shipping: send, url: `/items/${it.id}`, sellerLang: sellerLang(S.ctx.sellerId) });
+      const cmHtml = cmk ? ` · <a class="cm" href="${esc(cmk.href)}" target="_blank" rel="noopener" title="${esc(`${cmk.text}. ${cmk.tip}`)}">Cardmarket ↗</a>` : '';
       return `<div class="it${inLot || pending ? ' in' : ''}">
         ${it.thumb ? `<img src="${esc(it.thumb)}" alt="" loading="lazy" />` : '<div class="ph"></div>'}
         <div class="tx"><div class="t" title="${esc(it.title)}">${esc(it.title)}</div>
-          <div class="m">${price}${it.status ? ` · ${esc(it.status)}` : ''}${it.reserved ? ' <span class="tag">Réservé</span>' : ''}</div></div>
+          <div class="m">${price}${it.status ? ` · ${esc(it.status)}` : ''}${cmHtml}${it.reserved ? ' <span class="tag">Réservé</span>' : ''}</div></div>
         <div class="bt"><button class="btn${inLot || pending ? ' on' : ' primary'}" data-act="lot" data-id="${esc(it.id)}"${it.reserved && !inLot && !pending ? ' disabled' : ''}>${label}</button>
           <button class="btn" data-act="see" data-id="${esc(it.id)}" title="Montrer l’annonce dans la page, ou l’ouvrir dans un nouvel onglet">Voir</button></div>
       </div>`;

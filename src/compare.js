@@ -445,6 +445,7 @@
     // Le fragment d'abord ; à défaut ce que cet onglet a gardé (page de vérification passée entre-temps, filtre
     // changé avec le formulaire de Cardmarket : l'adresse n'a plus de fragment).
     let m = decodeMarker(loc.hash);
+    const fromHash = !!m;
     const kept = read();
     if (!m && kept) {
       const k = checkMarker(kept.m);
@@ -453,6 +454,14 @@
     if (!m) return;
     if (/^(Just a moment|Un instant|Einen Moment|Un momento)/i.test(doc.title) || doc.querySelector('#challenge-form, #challenge-running')) {
       return void write({ m, pending: true, key: '' }); // vérification de Cardmarket : on reprendra sur la vraie page
+    }
+    // Une fois lu, le fragment quitte la barre d'adresse : l'onglet garde la comparaison de son côté.
+    if (fromHash) {
+      try {
+        root.history.replaceState(root.history.state, '', loc.pathname + loc.search);
+      } catch (e) {
+        /* sans importance */
+      }
     }
 
     const productUrl = (k, mark) => {
