@@ -113,9 +113,18 @@
     const t = languagesIn(title);
     if (t.length) return { id: t[0], sure: t.length === 1, from: 'titre' };
     const d = languagesIn(description);
-    if (d.length) return { id: d[0], sure: d.length === 1, from: 'description' };
-    return { id: null, sure: false, from: '' };
+    if (!d.length) return { id: null, sure: false, from: '' };
+    // Dans chaque phrase, seul ce qui précède « envoi », « vendeur », « autres »… décrit la carte : « Vendeur
+    // français », « envoi depuis la France 🇫🇷 », « mes autres cartes japonaises » ne disent rien de sa langue.
+    const own = languagesIn(
+      String(description || '')
+        .split(/[\n.!?;,]+/)
+        .map((p) => p.slice(0, (ABOUT_SELLER.exec(norm(p)) || { index: p.length }).index))
+        .join('\n')
+    );
+    return own.length ? { id: own[0], sure: own.length === 1, from: 'description' } : { id: d[0], sure: false, from: 'description' };
   }
+  const ABOUT_SELLER = /\b(?:envoi\w*|expedi\w*|livr\w*|vendeu(?:r|se)s?|depuis|autres?|aussi|profil|dressing)\b/;
 
   // ---------- État ----------
 
@@ -163,10 +172,12 @@
   const GRADED = /\b(PSA|BGS|CGC|PCA|SGC|AOG|CCC)\s*:?\s*(10|[1-9](?:[.,]5)?)(?![\d/])/i;
   const SEALED = /\b(?:display|booster|boosters|coffret|etb|elite trainer|tripack|duopack|tin|pokebox|blister|bundle|deck|upc|portfolio|classeur)\b/;
   const LOT = /^\s*lots?\b|\blots? de\b|\b\d+\s*cartes\b|\bcartes?\s*x\s*\d+\b|\bx\s*\d+\s*cartes\b/;
-  const CARDISH = /\b(?:carte|card|tcg|jcc|holo|reverse|ex|gx|vmax|vstar|full art|promo|psa|rare)\b/;
+  const CARDISH = /\b(?:carte|card|tcg|jcc|holo|reverse|ex|gx|vmax|vstar|full art|promo|psa|(?:illustration|speciale|ultra|secrete?|hyper|double) rare)\b/;
+  // Vêtements, peluches, DVD… de la même marque : « 12/14 ans » n'est pas un numéro de carte.
+  const OBJECT = /\d\s*\/\s*\d+\s*(?:ans|mois|cm)\b|\btaille\s*(?:\d|[xsml]{1,3}\b)|\b(?:t-?shirt|tee-?shirt|sweat|pull|pyjama|peluche|figurine|tomes?|dvd|blu-?ray|game ?boy|mug|puzzle|poster)\b/;
 
   // 297/190, 065/64, TG12/TG30, GG35/GG70 ; à défaut un numéro de promo (SWSH123, SVP 045) ou « n° 65 ».
-  const NUMBER = /(?<![A-Za-z0-9])((?:[A-Z]{1,4})?\d{1,3}[a-z]?)\s*\/\s*((?:[A-Z]{1,4})?\d{1,3})(?![A-Za-z0-9])/;
+  const NUMBER = /(?<![A-Za-z0-9])((?:[A-Z]{1,4})?\d{1,3}[a-z]?)\s*\/\s*((?:[A-Z]{1,4})?\d{1,3}|[A-Z]{1,3}-P)(?![A-Za-z0-9])/;
   const PROMO = /(?<![A-Za-z0-9])((?:SWSH|SVP|SMP|SM|XY|BW|HGSS|DP|MEP)\s?-?\s?\d{1,3})(?![A-Za-z0-9])/;
   const HASH = /(?:n[°o]\s*|#\s*)(\d{1,3})(?![\d/])/i;
 
@@ -191,7 +202,7 @@
         .split(' ')
         .filter((w) => {
           const n = norm(w).replace(/^[.:\-]+|[.:\-]+$/g, '');
-          return n && !NOISE.has(n) && !/^\d+$/.test(n) && !SET_CODE.test(n);
+          return n && !NOISE.has(n) && !/^\d+(?:[.,]\d+)?$/.test(n) && !SET_CODE.test(n);
         });
       if (words.some((w) => /\p{L}{2}/u.test(w))) return words.join(' ');
     }
@@ -227,6 +238,15 @@
     return [...new Set(out)].slice(0, 4);
   }
 
+  /** Note d'une carte gradée, sauf quand le texte n'en parle que comme d'un espoir (« potentiel PSA 10 »). */
+  function gradedIn(text) {
+    const s = String(text || '');
+    const g = GRADED.exec(s);
+    if (!g) return null;
+    const before = norm(s.slice(0, g.index)).split(/[\n.!?;]/).pop(); // la phrase en cours, avant la note
+    return /\b(?:potenti\w*|digne|candidat\w*|non grad\w*|pas grad\w*|a (?:faire )?grad\w*)\b/.test(before) ? null : g;
+  }
+
   /**
    * Nom anglais d'une carte, lu dans l'adresse de sa fiche Cardmarket (les adresses sont en anglais quelle que soit
    * la langue du site) : « …/Paldean-Fates/Coalossal-V1-PAF148 » → « Coalossal ».
@@ -249,15 +269,19 @@
     if (!game) return { ok: false, reason: 'jeu' };
     const low = norm(title);
     if (LOT.test(low)) return { ok: false, reason: 'lot' };
+    if (OBJECT.test(low)) return { ok: false, reason: 'carte' };
     const { name, number } = parseCardTitle(title);
     if (!name) return { ok: false, reason: 'nom' };
-    const sealed = SEALED.test(low) && !number;
+    // Scellé : un mot de produit scellé, sans numéro de carte — sauf « Carte … promo coffret », « sortie de booster ».
+    const at = low.search(SEALED);
+    const single = /^\s*cartes?\b|\b(?:sorti|issu|tire)e?s? d[eu]\b/.test(low) || (at > 0 && /\bpromo\b/.test(low.slice(0, at)));
+    const sealed = at >= 0 && !number && !single;
     // Marque « Pokémon » sur une peluche ou un tee-shirt : il faut un indice de carte.
     if (!sealed && !number && !CARDISH.test(norm(text))) return { ok: false, reason: 'carte' };
     let lang = detectLanguage(title, a.description);
     if (!lang.id && a.sellerLang && langOf(a.sellerLang)) lang = { id: a.sellerLang, sure: false, from: 'vendeur' };
     if (!lang.id) lang = { id: 2, sure: false, from: '' }; // vinted.fr : le plus souvent des cartes françaises
-    const g = GRADED.exec(text);
+    const g = gradedIn(title) || gradedIn(a.description);
     const graded = g ? `${g[1].toUpperCase()} ${g[2].replace('.', ',')}` : '';
     // Scellé ou carte gradée : l'échelle d'états ne s'applique pas.
     const cond = sealed || graded ? { code: null, from: '' } : conditionFor(a.status, text);
@@ -281,7 +305,10 @@
   /** Explication complète, pour l'infobulle. */
   function explain(d, status) {
     const out = [];
-    out.push(d.lang.from ? `Langue lue dans ${d.lang.from === 'vendeur' ? 'une autre annonce de ce vendeur' : d.lang.from === 'titre' ? 'le titre' : 'la description'}.` : 'Langue non précisée dans l’annonce : français supposé.');
+    const where = d.lang.from === 'titre' ? 'le titre' : 'la description';
+    if (d.lang.from === 'vendeur') out.push('Langue lue dans une autre annonce de ce vendeur.');
+    else if (!d.lang.from) out.push('Langue non précisée dans l’annonce : français supposé.');
+    else out.push(d.lang.sure ? `Langue lue dans ${where}.` : `Langue incertaine dans ${where} : ${langOf(d.lang.id).fr} supposé.`);
     if (d.graded) out.push('Carte gradée : Cardmarket vend surtout des cartes non gradées, la comparaison est indicative.');
     else if (d.cond.code && d.cond.from === 'annonce') out.push(`État écrit par le vendeur : ${condOf(d.cond.code).label}.`);
     else if (d.cond.code) out.push(`État Vinted « ${clean(status)} » → Cardmarket « ${condLabel(d.cond.code)} ».`);
@@ -328,7 +355,7 @@
       k: v.k === 'sealed' ? 'sealed' : 'singles',
       t: clean(str(v.t, 120)), // titre de l'annonce
       n, // nom de la carte
-      num: /^[A-Za-z0-9 ]{1,10}(?:\/[A-Za-z0-9]{1,8})?$/.test(str(v.num, 20)) ? v.num : '',
+      num: /^[A-Za-z0-9 ]{1,10}(?:\/[A-Za-z0-9-]{1,8})?$/.test(str(v.num, 20)) ? v.num : '',
       qs: qs.length ? qs : [n],
       qi: Math.min(Math.max(parseInt(v.qi, 10) || 0, 0), 3), // recherche en cours
       l: langOf(v.l) ? v.l : 0, // langue (0 = toutes)
@@ -342,9 +369,11 @@
       sh: num(v.sh), // envoi (absent : inconnu)
       u: /^\/items\/\d{1,15}$/.test(str(v.u, 40)) ? v.u : '', // annonce d'origine
       en: v.en ? 1 : 0, // recherche par le nom anglais déjà tentée
-      lo: /^[a-z]{2}$/.test(str(v.lo, 2)) ? v.lo : '', // langue du site à retrouver après une recherche en anglais
+      lo: typeof v.lo === 'string' && /^[a-z]{2}$/.test(v.lo) ? v.lo : '', // langue du site à retrouver après une recherche en anglais
       a: v.a ? 1 : 0, // filtres déjà posés sur la fiche
-      d: v.d ? 1 : 0, // filtre de langue retiré faute d'offres
+      d: langOf(v.d) ? v.d : 0, // langue du filtre retiré faute d'offres
+      x: v.x ? 1 : 0, // filtre choisi à la main dans le bandeau
+      w: v.w ? 1 : 0, // fiche ouverte sans que son numéro soit celui de l'annonce
       h: Math.min(Math.max(parseInt(v.h, 10) || 0, 0), 9), // redirections déjà faites
     };
   }
@@ -378,7 +407,7 @@
     });
     if (!m) return '';
     // Champs vides retirés : l'adresse reste courte.
-    for (const k of Object.keys(m)) if (m[k] === '' || m[k] === null || m[k] === 0) delete m[k];
+    for (const k of Object.keys(m)) if (m[k] === '' || m[k] === null || (m[k] === 0 && k !== 'sh')) delete m[k]; // envoi offert : 0 se garde
     m.v = 1;
     return searchUrl(d.game, d.queries[0], d.kind) + encodeMarker(m);
   }
@@ -489,6 +518,24 @@
       loc.replace(url);
     };
 
+    // Recherche suivante quand rien ne porte le bon numéro : par le nom anglais lu dans l'adresse d'une fiche du même
+    // nom (Cardmarket ne range peut-être cette carte que sous ce nom : extensions japonaises), sinon la requête
+    // suivante, plus large. Trois recherches de plus au maximum. Renvoie true si une page est en train de s'ouvrir.
+    const base = (s) => norm(clean(String(s).replace(SUFFIX, '')));
+    const search = (mark, locale) => go(searchUrl(mark.g, mark.qs[mark.qi], mark.k).replace('/fr/', `/${locale}/`) + encodeMarker(mark), mark);
+    function widen(sameName) {
+      if (m.h >= 3) return false;
+      const en = !m.en && m.num && sameName ? englishFromKey(sameName.key) : '';
+      if (en && base(en) !== base(m.n)) {
+        const qs = [...new Set([`${clean(en.replace(SUFFIX, '')) || en} ${m.num.split('/')[0]}`, en])];
+        search(Object.assign({}, m, { en: 1, lo: here.locale, n: en, qs, qi: 0, h: m.h + 1 }), 'en');
+        return true;
+      }
+      if (m.qi + 1 >= m.qs.length) return false;
+      search(Object.assign({}, m, { qi: m.qi + 1, h: m.h + 1 }), here.locale);
+      return true;
+    }
+
     if (isSearch) return void onSearch();
     if (key && doc.querySelector('h1')) return void onProduct();
     write({ m, pending: false, key: (kept && kept.key) || '' });
@@ -502,20 +549,10 @@
         return go(productUrl(sure.key, mark), mark);
       }
       const matches = rank.candidates.filter((c) => m.num && c.detail && c.detail.number);
-      const search = (mark, locale) => go(searchUrl(mark.g, mark.qs[mark.qi], mark.k).replace('/fr/', `/${locale}/`) + encodeMarker(mark), mark);
-      // Rien au bon numéro : trois recherches de plus au maximum.
-      if (!matches.length && m.h < 3) {
-        // La carte existe sous ce nom, mais pas à ce numéro : Cardmarket ne range peut-être celle-ci que sous son
-        // nom anglais (extensions japonaises). Ce nom se lit dans l'adresse des fiches trouvées.
-        const base = (s) => norm(clean(String(s).replace(SUFFIX, '')));
-        const same = !m.en && m.num ? rank.candidates.find((c) => base(cm.searchableName(c.name)) === base(m.n)) : null;
-        const en = same ? englishFromKey(same.key) : '';
-        if (en && base(en) !== base(m.n)) {
-          const qs = [...new Set([`${clean(en.replace(SUFFIX, '')) || en} ${m.num.split('/')[0]}`, en])];
-          return search(Object.assign({}, m, { en: 1, lo: here.locale, n: en, qs, qi: 0, h: m.h + 1 }), 'en');
-        }
-        // Sinon : recherche suivante, plus large.
-        if (m.qi + 1 < m.qs.length) return search(Object.assign({}, m, { qi: m.qi + 1, h: m.h + 1 }), here.locale);
+      // Rien au bon numéro — ou, pour une annonce sans numéro, rien du tout : on élargit. Des résultats sans numéro
+      // à comparer se choisissent à la main.
+      if (m.num ? !matches.length : !rank.candidates.length) {
+        if (widen(rank.candidates.find((c) => base(cm.searchableName(c.name)) === base(m.n)))) return;
       }
       write({ m, pending: true, key: '' }); // le choix à la main garde la comparaison
       // Les liens des résultats mènent à la fiche déjà filtrée ; ceux au bon numéro sont mis en avant.
@@ -534,7 +571,15 @@
     function onProduct() {
       const cur = new URLSearchParams(loc.search);
       if (!m.a) {
-        // Arrivée directe sur la fiche (recherche à un seul résultat) : les filtres n'y sont pas encore.
+        // Arrivée directe sur la fiche (recherche à un seul résultat). Même exigence que dans une liste : son numéro
+        // doit être celui de l'annonce. Sinon on élargit la recherche ; à défaut, le bandeau prévient sans comparer.
+        const nb = CMR.analyzer.normNumber(m.num);
+        const fits = !nb || CMR.analyzer.normNumber(cm.parseProductInfo(doc).number) === nb || new RegExp(`(^|[^0-9])${nb}$`).test(CMR.analyzer.normNumber(key.split('/').pop()));
+        if (!fits) {
+          if (fromHash && widen({ key })) return;
+          m = Object.assign({}, m, { w: 1 });
+        }
+        // Les filtres n'y sont pas encore.
         const mark = Object.assign({}, m, { a: 1, h: m.h + 1 });
         const want = new URL(productUrl(key, mark));
         const same = (want.searchParams.get('language') || '') === (cur.get('language') || '') && (want.searchParams.get('minCondition') || '') === (cur.get('minCondition') || '');
@@ -543,8 +588,9 @@
       }
       const offers = cm.parseOfferRows(doc);
       // Langue seulement supposée et aucune offre : c'est sans doute une autre langue (fiche japonaise…).
-      if (!offers.length && m.l && !m.ls && !m.d && cur.get('language') && m.h < 6) {
-        const mark = Object.assign({}, m, { l: 0, d: 1, h: m.h + 1 });
+      const own = (fromHash || (kept && kept.pending)) && !m.x && cur.get('language') === String(m.l);
+      if (!offers.length && m.l && !m.ls && !m.d && own && m.h < 6) {
+        const mark = Object.assign({}, m, { l: 0, d: m.l, h: m.h + 1 });
         return go(productUrl(key, mark), mark);
       }
       write({ m, pending: false, key });
@@ -644,7 +690,7 @@
       }
 
       const best = bestOffer(ctx.offers, ctx.cfg, m.sh == null);
-      const v = verdict(m, best);
+      const v = m.w ? null : verdict(m, best); // fiche au mauvais numéro : pas d'écart chiffré
       const cols = el('div', 'cols');
       const col = (title, big, small) => {
         const c = el('div', 'col');
@@ -679,21 +725,27 @@
       const langs = el('div', 'row');
       langs.appendChild(el('span', '', 'Langue'));
       const shown = [...new Set([2, 7, 1, m.l].filter(Boolean))];
-      for (const id of shown) langs.appendChild(link(langOf(id).fr, curLang.length === 1 && curLang[0] === id, Object.assign({}, m, { l: id, ls: 1, a: 1 })));
-      langs.appendChild(link('toutes', !curLang.length, Object.assign({}, m, { l: 0, ls: 1, a: 1 })));
+      // Un choix fait ici est celui de l'utilisateur (x) : plus de langue « supposée », plus de filtre retiré d'office.
+      const chosen = (l) => Object.assign({}, m, { l, ls: 1, lf: '', a: 1, d: 0, x: 1 });
+      for (const id of shown) langs.appendChild(link(langOf(id).fr, curLang.length === 1 && curLang[0] === id, chosen(id)));
+      langs.appendChild(link('toutes', !curLang.length, chosen(0)));
       box.appendChild(langs);
       if (single) {
         const conds = el('div', 'row');
         conds.appendChild(el('span', '', 'État'));
-        for (const c of CONDS.slice(1, 6)) conds.appendChild(link(c.code, curCond === c.id, Object.assign({}, m, { c: c.code, a: 1 })));
-        conds.appendChild(link('tous', !curCond, Object.assign({}, m, { c: '', a: 1 })));
+        for (const c of CONDS.slice(1, 6)) conds.appendChild(link(c.code, curCond === c.id, Object.assign({}, m, { c: c.code, a: 1, x: 1 })));
+        conds.appendChild(link('tous', !curCond, Object.assign({}, m, { c: '', a: 1, x: 1 })));
         conds.appendChild(el('span', '', '(cet état ou mieux)'));
         box.appendChild(conds);
       }
 
       const notes = [];
-      if (m.d) notes.push('Aucune offre en français pour cette fiche : toutes les langues sont affichées (la langue n’était pas précisée dans l’annonce).');
-      else if (m.l && !m.ls) notes.push(`Langue ${m.lf === 'vendeur' ? 'reprise d’une autre annonce du vendeur' : 'non précisée dans l’annonce : français supposé'} — vérifie sur les photos.`);
+      if (m.w) notes.push(`Cette fiche ne porte pas le n° ${m.num} de l’annonce : vérifie que c’est la bonne carte avant de comparer.`);
+      if (m.d) notes.push(`Aucune offre en ${langOf(m.d).fr} avec ces filtres : toutes les langues sont affichées (la langue de l’annonce n’était pas sûre).`);
+      else if (m.l && !m.ls) {
+        const why = m.lf === 'vendeur' ? 'reprise d’une autre annonce du vendeur' : m.lf ? `incertaine dans ${m.lf === 'titre' ? 'le titre' : 'la description'} de l’annonce : ${langOf(m.l).fr} supposé` : 'non précisée dans l’annonce : français supposé';
+        notes.push(`Langue ${why} — vérifie sur les photos.`);
+      }
       else if (m.l && m.lf) notes.push(`Langue lue dans ${m.lf === 'titre' ? 'le titre' : 'la description'} de l’annonce.`);
       if (m.gr) notes.push(`Carte gradée ${m.gr} sur Vinted : ici ce sont surtout des cartes non gradées.`);
       else if (m.c && m.st) notes.push(`État Vinted « ${m.st} » comparé à « ${condLabel(m.c)} ».`);

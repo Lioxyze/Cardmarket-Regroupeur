@@ -147,3 +147,90 @@ test('Cardmarket : port estimé, meilleure offre et écart avec Vinted', () => {
   assert.equal(C.verdict({ tp: null, sh: 1 }, best), null);
   assert.equal(C.verdict({ tp: 3.84, sh: 2.83 }, null), null);
 });
+
+// ---------- Constats de la relecture ----------
+
+test('langue : une phrase sur le vendeur, l’envoi ou ses autres annonces ne dit rien de la carte', () => {
+  const l = (d) => C.detectLanguage('Charizard ex 199/165', d);
+  assert.deepEqual(l('Carte en très bon état.\nVendeur français sérieux, envoi rapide et soigné'), { id: 2, sure: false, from: 'description' });
+  assert.deepEqual(l('Envoi rapide et soigné depuis la France 🇫🇷'), { id: 2, sure: false, from: 'description' });
+  assert.deepEqual(l('N’hésitez pas à regarder mes autres cartes japonaises'), { id: 7, sure: false, from: 'description' });
+  assert.deepEqual(l('Envoi suivi US possible'), { id: 1, sure: false, from: 'description' });
+  // ce qui précède ces mots parle bien de la carte
+  assert.deepEqual(l('Carte japonaise envoi sous toploader'), { id: 7, sure: true, from: 'description' });
+  assert.deepEqual(l('Carte anglaise, envoi depuis la France 🇫🇷'), { id: 1, sure: true, from: 'description' });
+  assert.deepEqual(l('Extension EV4.5, envoi suivi'), { id: 2, sure: true, from: 'description' });
+  const d = listing('Charizard ex 199/165', { description: 'Vendeur français sérieux' });
+  assert.equal(C.summary(d), 'français (supposé) · Excellent ou mieux');
+  assert.match(C.explain(d, 'Très bon état'), /Langue incertaine dans la description : français supposé\./);
+});
+
+test('carte promo ou « sortie de booster » : une carte, pas un produit scellé', () => {
+  for (const t of ['Carte Pokémon Mewtwo ex promo coffret', 'Carte Pokémon Dracaufeu holo sortie de booster', 'Carte Pokémon Évoli promo blister', 'Mewtwo ex promo coffret', 'Carte Pokémon Pikachu tin promo']) {
+    const d = listing(t);
+    assert.equal(d.kind, 'singles', t);
+    assert.equal(d.cond.code, 'EX', t);
+  }
+  for (const t of ['Display Pokémon EV4.5 Destinées de Paldea', 'Coffret Dresseur d’Élite Évolutions Prismatiques', 'Booster Pokémon Flammes Obsidiennes', 'Coffret Pokémon avec carte promo']) {
+    assert.equal(listing(t).kind, 'sealed', t);
+  }
+});
+
+test('gradée : « potentiel PSA 10 » n’est pas une carte gradée', () => {
+  const nu = (description, title) => listing(title || 'Dracaufeu ex 199/165', { status: 'Neuf sans étiquette', description });
+  for (const d of ['Carte sortie de booster, potentiel PSA 10', 'Non gradée. Digne d’un PSA 10 !', 'Candidate PSA 10', 'Carte à faire grader, PSA 9 ou 10 possible']) {
+    assert.equal(nu(d).graded, '', d);
+    assert.equal(nu(d).cond.code, 'NM', d);
+  }
+  assert.equal(nu('', 'Dracaufeu ex 199/165 potentiel PSA 10').graded, '');
+  assert.equal(nu('Carte gradée PSA 9').graded, 'PSA 9');
+  assert.equal(nu('', 'Dracaufeu ex 199/165 PSA 10').graded, 'PSA 10');
+});
+
+test('objets de la même marque : ni carte, ni lien', () => {
+  for (const t of ['T-shirt Pokémon Pikachu 12/14 ans', 'Pyjama Pokémon 8/10 ans', 'Peluche Pikachu rare', 'Coffret DVD Pokémon saison 1', 'Casquette Pokémon rare', 'Robe Pokémon taille 36/38']) {
+    assert.deepEqual(listing(t), { ok: false, reason: 'carte' }, t);
+  }
+  assert.deepEqual(listing('Figurine Dragon Ball Z Son Goku sous blister', { brand: 'Dragon Ball' }), { ok: false, reason: 'carte' });
+  for (const t of ['Carte Pokémon Pikachu 25/25 célébrations 25 ans', 'Dracaufeu ultra rare', 'Mew illustration spéciale rare', 'Carte Pokémon Ronflex jumbo grande taille']) {
+    assert.equal(listing(t).ok, true, t);
+  }
+});
+
+test('titre : note d’une carte gradée et promo japonaise « 001/SV-P »', () => {
+  assert.deepEqual(C.parseCardTitle('Carte Pokémon PCA 9.5 Dracaufeu 199/165'), { name: 'Dracaufeu', number: '199/165' });
+  assert.deepEqual(C.parseCardTitle('Pikachu 001/SV-P promo japonaise'), { name: 'Pikachu', number: '001/SV-P' });
+  const d = listing('Pikachu 001/SV-P promo japonaise');
+  assert.deepEqual(d.queries, ['Pikachu 001', 'Pikachu']);
+  const url = C.cardmarketUrl(d, { total: 3 });
+  assert.equal(C.decodeMarker(url.slice(url.indexOf('#'))).num, '001/SV-P'); // le numéro survit au fragment
+});
+
+test('fragment : envoi offert gardé, langue du site stricte, nouveaux drapeaux', () => {
+  const d = listing('Gribouraigne – 297/190');
+  const read = (extra) => {
+    const url = C.cardmarketUrl(d, extra);
+    return C.decodeMarker(url.slice(url.indexOf('#')));
+  };
+  const free = read({ price: 2.99, total: 3.84, shipping: 0 });
+  assert.equal(free.sh, 0); // envoi offert : connu, et nul
+  assert.deepEqual(C.verdict(free, { price: 2.5, ship: 1.6, total: 4.1, country: 'FR' }), { vinted: 3.84, cardmarket: 4.1, withShipping: true, diff: -0.26 });
+  assert.equal(read({ total: 3.84 }).sh, null);
+  const mk = (v) => C.decodeMarker('#cmrv=' + encodeURIComponent(JSON.stringify(Object.assign({ v: 1, g: 'Pokemon', n: 'Pikachu' }, v))));
+  assert.equal(mk({ lo: 'en/Pokemon/Users/Quelquun/Offers?x=' }).lo, ''); // pas un chemin
+  assert.equal(mk({ lo: 'en' }).lo, 'en');
+  assert.equal(mk({ lo: 12 }).lo, '');
+  assert.deepEqual([mk({ d: 7 }).d, mk({ d: 99 }).d, mk({ d: 1 }).d], [7, 0, 1]); // langue du filtre retiré : un identifiant connu
+  assert.deepEqual([mk({ x: 1, w: 'oui' }).x, mk({ x: 1, w: 'oui' }).w, mk({}).x, mk({}).w], [1, 1, 0, 0]);
+});
+
+test('numéro lu dans l’adresse d’une fiche : entier, pas la fin d’un numéro plus long', () => {
+  const an = require('../src/analyzer.js');
+  const c = (slug, number) => ({ key: 'Pokemon/Products/Singles/' + slug, name: slug.split('/')[1], number: number || '', expansion: '', available: 1 });
+  const want = { name: 'Dracaufeu', number: '006/165', expansion: '' };
+  const rank = an.rankCandidates([c('Promos/Charizard-ex-SVP056'), c('Obsidian-Flames/Charizard-ex-V1-OBF125'), c('Paldean-Fates/Charizard-ex-V1-PAF054')], want);
+  assert.equal(rank.auto, null); // « 6 » ne colle pas à « …SVP056 »
+  assert.ok(rank.candidates.every((x) => !x.detail.number));
+  const ok = an.rankCandidates([c('Pokemon-Card-151/Charizard-ex-sv2a006'), c('Obsidian-Flames/Charizard-ex-V1-OBF125')], want);
+  assert.equal(ok.auto.key, 'Pokemon/Products/Singles/Pokemon-Card-151/Charizard-ex-sv2a006'); // « …sv2a006 » : bien le n° 6
+});

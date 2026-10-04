@@ -279,6 +279,15 @@ const CM_ROWS = {
   // d'une autre extension, dont l'adresse donne le nom anglais (Coalossal).
   Monthracite: [['Monthracite (PAF 148)', 'Paldean-Fates/Coalossal-V1-PAF148', '148']],
   'Coalossal 268': [['Coalossal (sv4a 268)', 'Shiny-Treasure-ex/Coalossal-sv4a268', '268']],
+  // Un seul résultat : Cardmarket ouvre la fiche à la place de la liste (redirection).
+  'Morpheo Forme Solaire': { redirect: 'Scarlet-Violet/Castform-Sunny-Form-SVI198' },
+  'Castform Sunny Form 067': [['Castform Sunny Form (sv6a 067)', 'Night-Wanderer/Castform-Sunny-Form-sv6a067', '067']],
+  'Pikachu 999': { redirect: '151/Pikachu-MEW025' },
+  Pikachu: { redirect: '151/Pikachu-MEW025' },
+  'Pikachu de Sacha': [
+    ['Pikachu de Sacha (SMP 108)', 'SM-Promos/Ashs-Pikachu-SMP108', '108'],
+    ['Pikachu de Sacha (SMP 109)', 'SM-Promos/Ashs-Pikachu-SMP109', '109'],
+  ],
   'Pikachu 025': [
     ['Pikachu (MEW 025)', '151/Pikachu-MEW025', '025'],
     ['Pikachu (sv2a 025)', 'Pokemon-Card-151/Pikachu-sv2a025', '025'],
@@ -290,6 +299,8 @@ const CM_OFFERS = {
   'Shiny-Treasure-ex/Gribouraigne-sv4a297': [['2,20 €', 'EX', 3, 'Japonais', 7, 'Allemagne'], ['2,50 €', 'NM', 2, 'Japonais', 7, 'France']],
   'Pokemon-Card-151/Dracaufeu-ex-sv2a006': [['30,00 €', 'NM', 2, 'Japonais', 7, 'France']],
   'Shiny-Treasure-ex/Coalossal-sv4a268': [['3,00 €', 'NM', 2, 'Japonais', 7, 'France']],
+  'Scarlet-Violet/Castform-Sunny-Form-SVI198': [['0,10 €', 'NM', 2, 'Japonais', 7, 'France']],
+  'Night-Wanderer/Castform-Sunny-Form-sv6a067': [['8,00 €', 'NM', 2, 'Japonais', 7, 'France']],
   '151/Pikachu-MEW025': [['0,50 €', 'NM', 2, 'Français', 2, 'France'], ['0,30 €', 'NM', 2, 'Anglais', 1, 'France']],
 };
 function fakeCardmarket(url) {
@@ -298,7 +309,9 @@ function fakeCardmarket(url) {
   const loc = (url.pathname.match(/^\/(fr|en)\//) || [])[1];
   if (!loc) return null;
   if (url.pathname === `/${loc}/Pokemon/Products/Search`) {
-    const rows = (CM_ROWS[url.searchParams.get('searchString')] || []).map(([name, slug, num], i) => `<div id="productRow${100 + i}" class="row g-0" style="padding:6px">
+    const found = CM_ROWS[url.searchParams.get('searchString')] || [];
+    if (found.redirect) return { redirect: `/${loc}/Pokemon/Products/Singles/${found.redirect}` };
+    const rows = found.map(([name, slug, num], i) => `<div id="productRow${100 + i}" class="row g-0" style="padding:6px">
       <div data-testid="name"><a href="/${loc}/Pokemon/Products/Singles/${slug}">${name}</a></div><div data-testid="collector_number">${num}</div>
       <div data-testid="availability">12</div><div data-testid="from_price">1,00 €</div></div>`);
     return shell('Rechercher', '', `<div class="table-body">${rows.join('')}</div>`);
@@ -609,6 +622,7 @@ async function main() {
       if (u.origin !== CM_SITE) return req.abort();
       const html = fakeCardmarket(u);
       if (html) cmSeen.push(u.pathname.split('/')[1] + ':' + u.pathname.split('/').pop() + u.search);
+      if (html && html.redirect) return req.respond({ status: 302, headers: { location: html.redirect }, body: '' });
       return html ? req.respond({ status: 200, contentType: 'text/html; charset=utf-8', body: html }) : req.respond({ status: 404, body: '' });
     });
     const banner = () =>
@@ -643,6 +657,33 @@ async function main() {
     b = await banner();
     ok(at().pathname.endsWith('/Dracaufeu-ex-sv2a006') && at().search === '?minCondition=4' && /45,53 €/.test(b) && /≈ 33,50 €/.test(b) && /Cardmarket moins cher de ≈ 12,03 €/.test(b), `${at().search} — ${b}`);
     ok(cmSeen.length === 3, `3 pages : ${cmSeen.join(' → ')}`);
+    // Un filtre choisi à la main dans le bandeau n'est plus retiré d'office.
+    await cmTab.evaluate(() => [...document.getElementById('cmrc-host').shadowRoot.querySelectorAll('.chip')].find((c) => c.textContent === 'français').click());
+    ok(await waitFor(async () => at().search === '?language=2&minCondition=4' && /aucune offre/i.test(await banner()), 10000), `« français » choisi à la main : le filtre reste, « aucune offre avec ces filtres » (${at().search})`);
+    await sleep(1500);
+    ok(at().search === '?language=2&minCondition=4' && !/toutes les langues sont affichées/.test(await banner()), 'pas de retour d’office à toutes les langues');
+
+    // Recherche à un seul résultat : Cardmarket ouvre la fiche directement. Son numéro n'est pas celui de l'annonce :
+    // la bonne carte est cherchée par le nom anglais lu dans l'adresse de cette fiche.
+    const listing5 = { title: 'Morpheo Forme Solaire – 067/064', brand: 'Pokémon', status: 'Très bon état', description: 'Carte japonaise' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing5), { title: listing5.title, status: listing5.status, price: 12, total: 13.3, shipping: 2.83, url: '/items/126' })).catch(() => {});
+    ok(await waitFor(async () => /sur vinted/i.test(await banner()) && at().pathname.endsWith('/Castform-Sunny-Form-sv6a067'), 15000), `fiche ouverte d’office au mauvais numéro (198) : la carte n° 067 est retrouvée — ${at().pathname.split('/').pop()}${at().search}`);
+    ok(at().search === '?language=7&minCondition=3' && /en:Search\?searchString=Castform\+Sunny\+Form\+067/.test(cmSeen.join(' ')) && !/ne porte pas/.test(await banner()), `${cmSeen.join(' → ')}`);
+    // Rien d'autre à essayer : la fiche reste, mais le bandeau prévient et ne chiffre pas d'écart.
+    const listing6 = { title: 'Pikachu 999/165 FR', brand: 'Pokémon', status: 'Très bon état', description: '' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing6), { title: listing6.title, status: listing6.status, price: 1, total: 1.75, shipping: 2.83, url: '/items/127' })).catch(() => {});
+    ok(await waitFor(async () => /ne porte pas le n° 999\/165/.test(await banner()), 15000), 'fiche au mauvais numéro, rien d’autre à essayer : le bandeau prévient');
+    b = await banner();
+    ok(at().pathname.endsWith('/Pikachu-MEW025') && !/moins cher/.test(b) && /sur vinted/i.test(b), `pas d’écart chiffré sur une fiche douteuse — ${b.slice(0, 200)}`);
+    // Annonce sans numéro : les résultats de la première recherche restent, à choisir à la main.
+    const listing7 = { title: 'Carte Pokémon Pikachu de Sacha holo', brand: 'Pokémon', status: 'Très bon état', description: '' };
+    cmSeen = [];
+    await cmTab.goto(C.cardmarketUrl(C.describeListing(listing7), { title: listing7.title, status: listing7.status, price: 5, total: 5.95, shipping: 2.83, url: '/items/128' })).catch(() => {});
+    ok(await waitFor(async () => /choisis la carte/.test(await banner()), 15000), `annonce sans numéro : ${await banner()}`);
+    await sleep(1200);
+    ok(at().pathname.endsWith('/Search') && cmSeen.length === 1 && at().searchParams.get('searchString') === 'Pikachu de Sacha', 'on reste sur la première recherche qui a des résultats');
 
     // Carte japonaise au titre français, que Cardmarket ne connaît que sous son nom anglais.
     const listing4 = { title: 'Monthracite – 268/190', brand: 'Pokémon', status: 'Très bon état', description: 'Carte japonaise' };

@@ -348,7 +348,8 @@
       const b = [normNumber(c.number), normNumber(fromName), normNumber(fromName.replace(/^[A-Za-z-]+\s*/, ''))];
       detail.number = !!a && b.includes(a);
       if (detail.number) score += 4;
-      else if (a && normNumber(c.key.split('/').pop()).endsWith(a)) {
+      // Numéro lu à la fin de l'adresse de la fiche : entier, pas la fin d'un numéro plus long (« 6 » dans « …SVP056 »).
+      else if (a && new RegExp(`(^|[^0-9])${a}$`).test(normNumber(c.key.split('/').pop()))) {
         detail.number = true;
         score += 3;
       }

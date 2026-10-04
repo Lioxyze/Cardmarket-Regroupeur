@@ -409,17 +409,21 @@ Voir sur Cardmarket, en détail (`src/compare.js`, chargé sur les deux sites) :
   → Tokotoro, n° 065). Les lots et les objets qui ne sont pas des cartes n'ont pas de lien.
 - **La langue** : lue dans le titre, sinon dans la description (« japonaise », « JP », « 🇯🇵 », « VF », « (EN) »,
   codes d'extension comme EV4.5 ou SV6a…). Sous les vignettes, où la description n'est pas visible, la langue lue
-  sur une annonce déjà ouverte du même vendeur est reprise. Sans indice : français supposé, et c'est écrit.
+  sur une annonce déjà ouverte du même vendeur est reprise. Sans indice : français supposé, et c'est écrit. Une
+  phrase qui parle du vendeur, de l'envoi ou de ses autres annonces (« vendeur français », « envoi depuis la
+  France », « mes autres cartes japonaises ») ne compte pas comme la langue de la carte.
 - **L'état** : celui du menu de Vinted, traduit dans l'échelle de Cardmarket — Neuf → Near Mint, Très bon état →
   Excellent, Bon état → Good, Satisfaisant → Light Played — sauf si le vendeur écrit lui-même « NM », « near
-  mint », « played »… Le filtre veut dire « cet état ou mieux ». Carte gradée (PSA 10…) : pas de filtre d'état.
+  mint », « played »… Le filtre veut dire « cet état ou mieux ». Carte gradée (PSA 10…) : pas de filtre d'état
+  (« potentiel PSA 10 » n'est pas une carte gradée).
 - **À l'arrivée sur Cardmarket** : la recherche part avec le nom et le numéro ; la carte qui porte ce numéro est
   ouverte toute seule, filtres langue et état posés (si plusieurs cartes ont ce numéro, elles sont encadrées et tu
   choisis). Si la langue n'était que supposée et qu'aucune offre n'existe dans cette langue, le filtre est retiré.
   Si Cardmarket connaît la carte sous ce nom mais pas à ce numéro, il ne la range peut-être que sous son nom
   anglais (extensions japonaises) : ce nom est lu dans l'adresse d'une autre fiche du même Pokémon et la recherche
   est refaite avec lui. Quatre recherches au plus s'enchaînent toutes seules ; au-delà, le bandeau te laisse
-  choisir.
+  choisir. Si la fiche ouverte ne porte pas le numéro de l'annonce, le bandeau le dit et ne chiffre pas d'écart.
+  Un filtre que tu choisis toi-même dans le bandeau n'est jamais modifié d'office.
 - **Le bandeau** : prix Vinted (protection et envoi compris) à côté de l'offre Cardmarket la moins chère port
   compris (mêmes estimations de port que le reste de l'extension), l'écart, et des boutons pour changer de langue
   ou d'état en un clic. Quand l'envoi Vinted n'est pas connu, les deux prix sont comparés hors envoi.
