@@ -126,3 +126,41 @@ test('article lu depuis Vinted', () => {
   });
   assert.equal(V.fromApiItem({ id: 1, title: 'x', price: { amount: '1.0' }, is_closed: true }).unavailable, true);
 });
+
+// ---------- Messages en direct ----------
+const MIN = 60000;
+
+test('direct : cadence des lectures du compteur', () => {
+  const at = (c) => V.liveInterval(Object.assign({ inbox: false, conv: false, visible: true, idleMs: 0, hiddenMs: 0 }, c));
+  assert.equal(at({ inbox: true, conv: true }), 7000); // conversation ouverte, utilisateur actif
+  assert.equal(at({ inbox: true }), 15000); // messagerie, aucune conversation ouverte
+  assert.equal(at({ inbox: true, conv: true, idleMs: 5 * MIN }), 20000);
+  assert.equal(at({ inbox: true, conv: true, idleMs: 20 * MIN }), MIN);
+  assert.equal(at({ inbox: true, conv: true, idleMs: 31 * MIN }), 0); // onglet oublié : arrêt
+  assert.equal(at({}), MIN); // autre page de Vinted
+  assert.equal(at({ idleMs: 20 * MIN }), 3 * MIN);
+  assert.equal(at({ idleMs: 31 * MIN }), 0);
+  assert.equal(at({ visible: false, inbox: true, conv: true }), MIN); // onglet caché : jamais la cadence rapide
+  assert.equal(at({ visible: false, hiddenMs: 15 * MIN }), 2 * MIN);
+  assert.equal(at({ visible: false, hiddenMs: 31 * MIN }), 0);
+});
+
+test('direct : la conversation n’est relue que si l’utilisateur est devant', () => {
+  const w = (c) => V.liveWatched(Object.assign({ visible: true, focused: true, idleMs: 0, inputMs: Infinity }, c));
+  assert.equal(w({}), true);
+  assert.equal(w({ visible: false }), false);
+  assert.equal(w({ idleMs: 4 * MIN }), false); // parti déjeuner, fenêtre au premier plan
+  assert.equal(w({ focused: false }), false); // fenêtre visible sur un second écran, personne devant
+  assert.equal(w({ focused: false, inputMs: 5000 }), true); // fenêtre à côté d'une autre, survolée à l'instant
+  assert.equal(w({ focused: false, inputMs: 40000 }), false);
+});
+
+test('direct : seule une hausse du compteur déclenche une relecture', () => {
+  assert.equal(V.liveDecide(null, 3), 'first'); // première valeur : simple référence, pas d'avis
+  assert.equal(V.liveDecide(0, 1), 'up');
+  assert.equal(V.liveDecide(1, 0), 'down'); // lu ici ou ailleurs : aucune requête
+  assert.equal(V.liveDecide(2, 2), 'same');
+  // message reçu puis lu : une seule relecture pour la suite 0 → 1 → 0
+  const seq = [0, 1, 0];
+  assert.equal(seq.slice(1).filter((n, i) => V.liveDecide(seq[i], n) === 'up').length, 1);
+});

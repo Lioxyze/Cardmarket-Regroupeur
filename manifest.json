@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Regroupeur — Cardmarket & Vinted",
   "short_name": "Regroupeur",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Cardmarket : regroupe tes achats chez le moins de vendeurs. Vinted : recherche dans un dressing, lots, prix avec envoi, messages.",
   "icons": {
     "16": "icons/icon-16.png",
@@ -52,6 +52,16 @@
         "src/vinted.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.vinted.fr/*"
+      ],
+      "js": [
+        "src/vinted-page.js"
+      ],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [

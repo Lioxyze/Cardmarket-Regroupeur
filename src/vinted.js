@@ -164,6 +164,35 @@
     return { items, withFee, total };
   }
 
+  const MINUTE = 60000;
+  const fin = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
+
+  // Délai entre deux lectures du compteur de messages non lus, en ms ; 0 = ne pas lire.
+  //   conversation ouverte, utilisateur actif : 7 s ; messagerie sans conversation ouverte : 15 s
+  //   3 à 15 min sans activité : 20 s ; 15 à 30 min : 60 s ; au-delà : arrêt jusqu'au prochain geste
+  //   autre page de Vinted : 60 s, puis 3 min, puis arrêt
+  //   onglet caché : 60 s pendant 10 min, 2 min jusqu'à 30 min (titre de l'onglet), puis arrêt
+  function liveInterval(c) {
+    if (!c.visible) return c.hiddenMs < 10 * MINUTE ? MINUTE : c.hiddenMs < 30 * MINUTE ? 2 * MINUTE : 0;
+    if (c.idleMs >= 30 * MINUTE) return 0;
+    if (c.inbox) return c.idleMs < 3 * MINUTE ? (c.conv ? 7000 : 15000) : c.idleMs < 15 * MINUTE ? 20000 : MINUTE;
+    return c.idleMs < 15 * MINUTE ? MINUTE : 3 * MINUTE;
+  }
+
+  // L'utilisateur regarde-t-il la page ? Relire une conversation la marque comme lue : on ne le fait que s'il est là.
+  // Fenêtre au premier plan et signe de présence depuis moins de 3 min, ou action dans la page depuis moins de 30 s
+  // (fenêtre posée à côté d'une autre, survolée à la souris).
+  function liveWatched(c) {
+    return !!c.visible && ((!!c.focused && c.idleMs < 3 * MINUTE) || c.inputMs < 30000);
+  }
+
+  // Que faire d'une nouvelle valeur du compteur : 'first' (référence), 'up' (nouveau message : relire), 'down' (lu
+  // quelque part : rien à relire), 'same'.
+  function liveDecide(prev, next) {
+    if (prev === null || prev === undefined) return 'first';
+    return next > prev ? 'up' : next < prev ? 'down' : 'same';
+  }
+
   const amount = (v) => (v && v.amount != null ? Number(v.amount) : v != null && !isNaN(Number(v)) ? Number(v) : null);
 
   function fromApiItem(raw) {
@@ -275,7 +304,7 @@
       load: { state: 'idle' },
       wanted: new Set(), // articles cochés (page du vendeur) ou en attente d'ajout (page du lot)
       pageSel: new Set(), // articles déjà dans le lot affiché par Vinted
-      settings: { titles: true, shipping: true },
+      settings: { titles: true, shipping: true, live: true },
       cmList: 0,
     };
 
@@ -308,6 +337,59 @@
         /* extension rechargée */
       }
     };
+
+    // ---------- Refus de Vinted (403 / 429) ----------
+    // Un refus met en pause TOUTES les lectures de l'extension (direct, prix d'envoi, dressing), dans tous les onglets
+    // et après un rechargement : insister pendant un blocage le prolonge. 10 min, doublées si la reprise est encore
+    // refusée (30 min au plus).
+    const BLOCK_KEY = 'cmrv.block';
+    const block = { until: 0 };
+    function readBlock() {
+      try {
+        const v = JSON.parse(root.localStorage.getItem(BLOCK_KEY));
+        return v && typeof v === 'object' ? { until: fin(v.until), n: fin(v.n) } : { until: 0, n: 0 };
+      } catch (e) {
+        return { until: 0, n: 0 };
+      }
+    }
+    const blockedUntil = () => Math.max(block.until, Math.min(readBlock().until, Date.now() + 30 * MINUTE));
+    // Les lectures secondaires (prix d'envoi, dressing) ne reprennent que 15 s après la fin de la pause : la
+    // première lecture du direct sert de test.
+    const refused = () => {
+      const until = blockedUntil();
+      return until > 0 && Date.now() < until + 15000;
+    };
+    function noteRefusal() {
+      const now = Date.now();
+      const b = readBlock();
+      if (now < Math.max(block.until, b.until)) return; // déjà en pause : un refus ne compte qu'une fois
+      const n = Math.min(b.n + 1, 3);
+      block.until = now + Math.min(PAUSE * 2 ** (n - 1), 30 * MINUTE);
+      try {
+        root.localStorage.setItem(BLOCK_KEY, JSON.stringify({ until: block.until, n }));
+      } catch (e) {
+        /* stockage indisponible : la pause vaut pour cet onglet */
+      }
+    }
+    function noteSuccess() {
+      const b = readBlock();
+      if (!b.n || Date.now() < b.until) return;
+      try {
+        root.localStorage.removeItem(BLOCK_KEY);
+      } catch (e) {
+        /* sans importance */
+      }
+    }
+    // Le vrai code de réponse des lectures de l'extension et de celles qu'elle fait faire à Vinted, quelle que soit
+    // la façon dont le code de Vinted présente ses erreurs.
+    const WATCHED = /\/api\/v2\/(conversations\/stats|inbox\b|conversations\/\d+|wardrobe\/|items\/\d+\/shipping_details)|\/messaging\/main\//;
+    try {
+      new root.PerformanceObserver((list) => {
+        for (const e of list.getEntries()) if ((e.responseStatus === 403 || e.responseStatus === 429) && WATCHED.test(e.name)) noteRefusal();
+      }).observe({ type: 'resource', buffered: false });
+    } catch (e) {
+      /* navigateur sans cette mesure : les codes lus directement suffisent */
+    }
 
     // ---------- Vignettes d'annonces de la page ----------
 
@@ -413,7 +495,7 @@
       try {
         while (ship.queue.length) {
           const now = Date.now();
-          if (now < ship.pausedUntil) break;
+          if (now < ship.pausedUntil || refused()) break;
           ship.stamps = ship.stamps.filter((t) => now - t < PAUSE);
           if (ship.stamps.length >= SHIP_CAP) {
             ship.pausedUntil = ship.stamps[0] + PAUSE;
@@ -433,9 +515,11 @@
             const r = await root.fetch(`/api/v2/items/${id}/shipping_details`, { headers: { accept: 'application/json' }, credentials: 'same-origin' });
             if (r.status === 403 || r.status === 429 || r.status === 401) {
               ship.pausedUntil = Date.now() + PAUSE;
+              if (r.status !== 401) noteRefusal();
               break;
             }
             if (r.ok) {
+              noteSuccess();
               const d = (await r.json()).shipping_details || {};
               if (d.pickup_only) info.kind = 'pickup';
               else if (d.free_shipping) Object.assign(info, { kind: 'free', amount: 0 });
@@ -454,7 +538,7 @@
       } finally {
         ship.busy = false;
         ship.queue = ship.queue.filter((id) => !ship.cache.has(id));
-        if (ship.queue.length && ship.pausedUntil > Date.now()) {
+        if (ship.queue.length && (ship.pausedUntil > Date.now() || refused())) {
           ship.queue = [];
           ship.queued.clear();
         }
@@ -576,6 +660,11 @@
         return renderAll();
       }
       setItems([]);
+      if (!force && refused()) {
+        S.load = { seller, state: 'blocked', total: 0 };
+        harvestDom();
+        return renderAll();
+      }
       S.load = { seller, state: 'loading', page: 0, pages: 1, total: 0 };
       renderAll();
       let pages = 1;
@@ -586,6 +675,7 @@
           const r = await root.fetch(`/api/v2/wardrobe/${seller}/items?page=${page}&per_page=${PER_PAGE}&order=relevance`, { headers: { accept: 'application/json' }, credentials: 'same-origin' });
           if (!r.ok) {
             S.load.state = r.status === 403 || r.status === 429 ? 'blocked' : 'error';
+            if (S.load.state === 'blocked') noteRefusal();
             break;
           }
           data = await r.json();
@@ -609,7 +699,7 @@
       renderAll();
       // Un prix d'envoi pour l'estimation du lot, même si les vignettes ne l'affichent pas.
       const s = sellerShip();
-      if (S.items[0] && s && !s.samples.length) {
+      if (S.load.state === 'done' && S.items[0] && s && !s.samples.length) {
         ship.force.add(S.items[0].id);
         wantShip(S.items[0].id, true);
       }
@@ -693,6 +783,7 @@
         <div class="opts">
           <label><input type="checkbox" id="opt-shipping" /> Prix avec envoi sous les annonces</label>
           <label><input type="checkbox" id="opt-titles" /> Nom de l’annonce sous les annonces</label>
+          <label><input type="checkbox" id="opt-live" /> Messages en direct (messagerie, pastille, titre de l’onglet)</label>
         </div>
       </section>`;
     const $ = (sel) => sh.querySelector(sel);
@@ -808,6 +899,7 @@
       $('#hint').hidden = seller;
       $('#opt-shipping').checked = S.settings.shipping;
       $('#opt-titles').checked = S.settings.titles;
+      $('#opt-live').checked = S.settings.live;
       if (!seller) return;
       for (const b of sh.querySelectorAll('.tabs button')) b.classList.toggle('on', b.dataset.mode === S.mode);
       $('#q').hidden = S.mode !== 'one';
@@ -859,8 +951,8 @@
       if (t.id === 'sort') {
         S.sort = t.value;
         renderResults();
-      } else if (t.id === 'opt-shipping' || t.id === 'opt-titles') {
-        S.settings[t.id === 'opt-shipping' ? 'shipping' : 'titles'] = t.checked;
+      } else if (t.id === 'opt-shipping' || t.id === 'opt-titles' || t.id === 'opt-live') {
+        S.settings[t.id.slice(4)] = t.checked;
         csSet({ 'cmrv.settings': S.settings });
         decorate();
       }
@@ -913,6 +1005,14 @@
       .cmrv-btn:disabled{opacity:.5;cursor:default}
       .cmrv-del{position:absolute;right:8px;bottom:6px;z-index:2;opacity:.55}
       .cmrv-del:hover,.cmrv-del.armed,.cmrv-del.on{opacity:1}
+      .cmrv-live{font-style:normal;font-size:12px;opacity:.75;white-space:nowrap}
+      .cmrv-live.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#1a9c5b;vertical-align:1px}
+      .cmrv-live.new{opacity:1;font-weight:600;color:#007782}
+      .cmrv-toast{position:fixed;left:16px;bottom:16px;z-index:2147483000;display:flex;align-items:flex-start;gap:4px;max-width:340px;padding:4px;border-radius:10px;background:#1b2130;color:#fff;box-shadow:0 10px 30px rgba(15,23,42,.35);font:13px/1.4 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+      .cmrv-toast button{border:0;background:none;color:inherit;font:inherit;cursor:pointer}
+      .cmrv-toast-main{display:grid;gap:2px;padding:8px 10px;text-align:left}
+      .cmrv-toast-main span{opacity:.8;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .cmrv-toast-x{padding:4px 8px;font-size:16px;opacity:.7}
     `;
 
     function ensurePageCss() {
@@ -950,7 +1050,7 @@
 
     const TRASH =
       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.5h6.8l.6-8.5M6.7 7v4M9.3 7v4"/></svg>';
-    const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '' };
+    const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '', note: '', restricted: new Set() };
     const convRow = (id) => doc.querySelector(`[data-testid="inbox-list-item-${id}"]`);
     const convRows = () => [...doc.querySelectorAll('[data-testid^="inbox-list-item-"]')].filter((el) => /^inbox-list-item-\d+$/.test(el.getAttribute('data-testid')));
     const convId = (el) => el.getAttribute('data-testid').slice('inbox-list-item-'.length);
@@ -1028,6 +1128,15 @@
 
     function inboxAct(act, id) {
       if (inbox.busy) return;
+      if (act === 'reload') {
+        // Recharger efface le message en cours de saisie : un second clic le confirme.
+        const draft = (doc.querySelector('[data-testid="composer--input"]') || {}).value;
+        if (!draft || inbox.armed === 'reload') return void loc.reload();
+        arm('reload');
+        return void decorateInbox();
+      }
+      if (act === 'relist') return void step(() => showNewInList(0));
+      if (act === 'del' && inbox.restricted.has(id)) return;
       if (act === 'del') {
         if (inbox.select) {
           if (!inbox.picked.delete(id)) inbox.picked.add(id);
@@ -1038,14 +1147,19 @@
         inbox.select = !inbox.select;
         inbox.picked.clear();
         inbox.armed = null;
-        inbox.msg = '';
+        inbox.msg = inbox.note = '';
       } else if (act === 'all') {
-        for (const r of convRows()) inbox.picked.add(convId(r));
+        for (const r of convRows()) if (!inbox.restricted.has(convId(r))) inbox.picked.add(convId(r));
         inbox.armed = null;
       } else if (act === 'delsel') {
         const ids = [...inbox.picked].filter(convRow);
         if (!ids.length) return;
         if (inbox.armed === 'sel') return void deleteMany(ids);
+        if (live.listDirty) {
+          // Un message est arrivé pendant la sélection : la liste est relue maintenant, avant de confirmer.
+          inbox.note = 'liste actualisée : vérifie ta sélection';
+          return void step(() => showNewInList(0));
+        }
         arm('sel');
       }
       decorateInbox();
@@ -1066,13 +1180,15 @@
       }
       const n = [...inbox.picked].filter(convRow).length;
       const s = (k) => (k > 1 ? 's' : '');
+      const liveHtml = liveBadge();
+      const note = inbox.note || (live.listDirty ? 'nouveau message : liste actualisée après la sélection' : '');
       const html = inbox.busy
         ? `<b>Regroupeur</b><span>${esc(inbox.msg)}</span>`
         : inbox.select
-          ? `<b>Regroupeur</b><span>${n} cochée${s(n)}</span><button class="cmrv-btn" data-cmrv-act="all">Tout cocher</button>
+          ? `<b>Regroupeur</b><span>${n} cochée${s(n)}${note ? ` · ${esc(note)}` : ''}</span><button class="cmrv-btn" data-cmrv-act="all">Tout cocher</button>
              <button class="cmrv-btn danger${inbox.armed === 'sel' ? ' armed' : ''}" data-cmrv-act="delsel"${n ? '' : ' disabled'}>${inbox.armed === 'sel' ? `Confirmer : supprimer ${n} conversation${s(n)}` : `Supprimer (${n})`}</button>
              <button class="cmrv-btn" data-cmrv-act="select">Annuler</button>`
-          : `<b>Regroupeur</b><span>${esc(inbox.msg)}</span><button class="cmrv-btn" data-cmrv-act="select">Supprimer plusieurs conversations</button>`;
+          : `<b>Regroupeur</b>${liveHtml}<span>${esc(inbox.msg)}</span><button class="cmrv-btn" data-cmrv-act="select">Supprimer plusieurs conversations</button>`;
       if (bar.dataset.k !== html) {
         bar.dataset.k = html;
         bar.innerHTML = html;
@@ -1085,12 +1201,13 @@
           b = doc.createElement('button');
           b.type = 'button';
           b.setAttribute('data-cmrv-act', 'del');
-          b.dataset.id = id;
           row.appendChild(b);
         }
-        const on = inbox.select && inbox.picked.has(id);
-        const armed = !inbox.select && inbox.armed === id;
-        const text = inbox.select ? (on ? '☑ À supprimer' : '☐ Cocher') : armed ? 'Supprimer ?' : '';
+        if (b.dataset.id !== id) b.dataset.id = id; // React peut réutiliser une ligne pour une autre conversation
+        const locked = inbox.restricted.has(id);
+        const on = inbox.select && !locked && inbox.picked.has(id);
+        const armed = !inbox.select && !locked && inbox.armed === id;
+        const text = locked ? '' : inbox.select ? (on ? '☑ À supprimer' : '☐ Cocher') : armed ? 'Supprimer ?' : '';
         const cls = `cmrv-btn danger cmrv-del${armed ? ' armed' : ''}${on ? ' on' : ''}`;
         if (b.dataset.t !== text) {
           b.dataset.t = text;
@@ -1099,8 +1216,14 @@
         }
         if (b.className !== cls) b.className = cls;
         b.setAttribute('aria-label', 'Supprimer cette conversation');
-        b.title = inbox.select ? 'Cocher cette conversation' : armed ? 'Clique encore pour supprimer définitivement cette conversation' : 'Supprimer cette conversation';
-        b.disabled = inbox.busy;
+        b.title = locked
+          ? 'Vinted ne permet pas de supprimer cette conversation pour le moment (commande en cours).'
+          : inbox.select
+            ? 'Cocher cette conversation'
+            : armed
+              ? 'Clique encore pour supprimer définitivement cette conversation'
+              : 'Supprimer cette conversation';
+        b.disabled = inbox.busy || locked;
       }
     }
 
@@ -1117,10 +1240,508 @@
       true
     );
 
+    // ---------- Messages en direct ----------
+    // Vinted ne relit jamais sa messagerie. Ici : lecture régulière du compteur de messages non lus (la requête de la
+    // pastille du bandeau, quelques octets). Quand il AUGMENTE, Vinted relit avec son propre code (src/vinted-page.js)
+    // la conversation ouverte — seulement si l'utilisateur est devant, car la lire la marque comme lue — puis la
+    // liste si le message était ailleurs. Une baisse (conversation lue) ne déclenche aucune requête.
+    // Un seul onglet lit à la fois (verrou + heure partagée dans localStorage).
+
+    const LIVE_KEY = 'cmrv.live';
+    const LIVE_BUDGET = 700; // lectures par heure, tous onglets confondus
+    const started = Date.now();
+    const live = {
+      busy: false, // lecture du compteur en cours
+      refreshing: false, // relecture de la messagerie en cours
+      stopped: false, // session expirée : plus rien jusqu'au prochain chargement
+      localPauseUntil: 0, // lectures en échec sans code connu
+      errors: 0,
+      unread: null, // dernière valeur lue par cet onglet
+      t: 0, // heure de cette lecture
+      preUp: null, // valeur d'avant la dernière hausse
+      listDirty: false, // la liste affichée n'est plus à jour
+      convDirty: false, // la conversation ouverte non plus
+      heal: false, // une relecture a échoué : à refaire après la prochaine lecture réussie
+      tries: 0,
+      manual: false, // relecture impossible : proposer « Actualiser »
+      skipped: false, // liste trop longue pour être relue d'office
+      force: false, // lire dès que possible (retour sur l'onglet, entrée dans la messagerie)
+      navAt: 0,
+      wasInbox: false,
+      retryAt: 0,
+      fallbackAt: 0,
+      jitter: 1,
+      listAt: started, // dernière relecture de la liste
+      lastRefresh: started,
+      lastVisible: started,
+      visibleAt: 0,
+      lastActive: started, // dernier signe de présence (saisie, souris, retour sur la fenêtre)
+      lastInput: 0, // dernière action réelle dans la page (souris, clavier)
+      pendingToast: false,
+      prefix: '',
+      stateAt: 0,
+    };
+    const onInbox = () => /^\/inbox(\/|$)/.test(loc.pathname);
+    const openConv = () => {
+      const m = loc.pathname.match(/^\/inbox\/([^/]+)/);
+      if (!m || m[1] === 'want_it') return null;
+      try {
+        return decodeURIComponent(m[1]);
+      } catch (e) {
+        return m[1];
+      }
+    };
+
+    // --- relais vers la page (src/vinted-page.js) ---
+    const bridge = () => doc.documentElement.hasAttribute('data-cmrv-page');
+    const pending = new Map();
+    root.addEventListener('cmrv:res', (e) => {
+      let r;
+      try {
+        r = JSON.parse(e.detail);
+      } catch (err) {
+        return;
+      }
+      const p = r && pending.get(r.id);
+      if (!p) return;
+      pending.delete(r.id);
+      clearTimeout(p.timer);
+      p.resolve(r);
+    });
+    function ask(op, payload, ms) {
+      return new Promise((resolve) => {
+        if (!bridge()) return resolve({ ok: false, reason: 'no-bridge' });
+        const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          resolve({ ok: false, reason: 'timeout' });
+        }, ms);
+        pending.set(id, { resolve, timer });
+        root.dispatchEvent(new CustomEvent('cmrv:req', { detail: JSON.stringify(Object.assign({ id, op }, payload)) }));
+      });
+    }
+
+    // --- état partagé entre onglets et entre chargements de page (jamais d'exception, valeurs assainies) ---
+    function shared() {
+      let v = null;
+      try {
+        v = JSON.parse(root.localStorage.getItem(LIVE_KEY));
+      } catch (e) {
+        /* stockage indisponible ou valeur abîmée */
+      }
+      v = v && typeof v === 'object' ? v : {};
+      const now = Date.now();
+      return {
+        t: Math.min(fin(v.t), now), // dernière lecture du compteur, tous onglets confondus
+        unread: typeof v.unread === 'number' && isFinite(v.unread) ? v.unread : null,
+        changedAt: Math.min(fin(v.changedAt), now), // dernière hausse observée
+        ann: Math.min(fin(v.ann), now), // dernier avis « Nouveau message » affiché
+        h: fin(v.h), // heure en cours et nombre de requêtes du direct, pour le plafond horaire
+        n: fin(v.n),
+      };
+    }
+    function share(patch) {
+      try {
+        root.localStorage.setItem(LIVE_KEY, JSON.stringify(Object.assign(shared(), patch)));
+      } catch (e) {
+        /* stockage indisponible : chaque onglet lit pour lui, à sa cadence */
+      }
+    }
+    const hour = () => Math.floor(Date.now() / 3600000);
+    function spend() {
+      const s = shared();
+      share(s.h === hour() ? { n: s.n + 1 } : { h: hour(), n: 1 });
+    }
+    const overBudget = () => {
+      const s = shared();
+      return s.h === hour() && s.n >= LIVE_BUDGET;
+    };
+
+    // Repli quand la pastille de Vinted est introuvable dans la page : lecture directe du compteur.
+    async function fetchUnread() {
+      try {
+        const signal = root.AbortSignal && root.AbortSignal.timeout ? root.AbortSignal.timeout(10000) : undefined;
+        const r = await root.fetch('/api/v2/conversations/stats', { headers: { accept: 'application/json' }, credentials: 'same-origin', signal });
+        if (!r.ok) return { ok: false, reason: 'error', status: r.status };
+        const n = Number((await r.json()).unread_msg_count);
+        return isFinite(n) ? { ok: true, next: n } : { ok: false, reason: 'error', status: 0 };
+      } catch (e) {
+        return { ok: false, reason: 'error', status: 0 };
+      }
+    }
+
+    async function readUnread(maxAgeMs) {
+      const res = await ask('poll', { maxAgeMs }, 12000);
+      if (res.ok || !(res.reason === 'no-observer' || res.reason === 'no-data')) return res;
+      // La page est bien celle de Vinted mais sa pastille est introuvable : lecture directe, après un délai de grâce
+      // (page en cours de construction) et jamais plus d'une fois par minute.
+      const now = Date.now();
+      if (now - started < 10000 || now - live.fallbackAt < MINUTE) return { ok: false, reason: 'wait' };
+      live.fallbackAt = now;
+      return fetchUnread();
+    }
+
+    function dropToast(kind) {
+      for (const el of doc.querySelectorAll(kind ? `[data-cmrv-toast="${kind}"]` : '[data-cmrv-toast]')) el.remove();
+    }
+
+    // Lit le compteur. « adopt » : relecture juste après avoir lu une conversation, dont la valeur devient la référence
+    // sans être traitée comme un changement. Renvoie la valeur lue, ou undefined.
+    async function pollUnread(every, adopt) {
+      live.busy = true;
+      try {
+        const run = async () => {
+          const s = shared();
+          if (!adopt && Date.now() - Math.max(live.t, s.t) < 2500) return undefined; // un autre onglet vient de lire
+          const res = await readUnread(adopt ? 0 : every);
+          const now = Date.now();
+          live.jitter = 0.8 + Math.random() * 0.4;
+          if (!res.ok) {
+            if (res.reason === 'no-bridge' || res.reason === 'no-react' || res.reason === 'wait') {
+              live.retryAt = now + 5000; // aucune requête n'est partie
+              return undefined;
+            }
+            live.t = now;
+            spend();
+            share({ t: now });
+            if (res.status === 403 || res.status === 429) noteRefusal();
+            else if (res.status === 401) live.stopped = true;
+            else if (++live.errors >= 2) live.localPauseUntil = now + PAUSE; // sans code connu : on double, puis on se tait
+            return undefined;
+          }
+          const at = res.cached ? Math.min(fin(res.at) || now, now) : now;
+          if (!res.cached) spend();
+          live.errors = 0;
+          live.t = at;
+          noteSuccess();
+          const kind = adopt ? 'adopt' : liveDecide(live.unread, res.next);
+          const prev = live.unread;
+          live.unread = res.next;
+          share(kind === 'up' ? { t: at, unread: res.next, changedAt: now } : { t: at, unread: res.next });
+          if (live.heal) {
+            live.heal = false;
+            live.listDirty = live.convDirty = true;
+          }
+          if (kind === 'up') {
+            live.preUp = prev;
+            live.listDirty = live.convDirty = true;
+            live.tries = 0;
+            if (!onInbox()) live.pendingToast = true;
+          } else if (kind === 'down') {
+            // Lu entre-temps (ici ou sur un autre appareil) : l'avis n'a plus lieu d'être. Aucune requête.
+            live.pendingToast = false;
+            dropToast('msg');
+          }
+          return res.next;
+        };
+        if (root.navigator.locks && root.navigator.locks.request) {
+          return await root.navigator.locks.request('cmrv-live', { ifAvailable: true }, (lock) => (lock ? run() : undefined));
+        }
+        return await run();
+      } catch (e) {
+        return undefined;
+      } finally {
+        live.busy = false;
+      }
+    }
+
+    // Fil de la conversation ouverte : élément qui défile, pour rester en bas quand un message arrive.
+    function convView() {
+      let el = doc.querySelector('[data-testid="conversation-content"]');
+      while (el && el !== doc.body) {
+        if (/(auto|scroll)/.test(root.getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 4) break;
+        el = el.parentElement;
+      }
+      if (!el || el === doc.body) return null;
+      return { el, height: el.scrollHeight, atBottom: el.scrollHeight - el.scrollTop - el.clientHeight < 120 };
+    }
+
+    // Avis ou défilement seulement si le fil a réellement grandi par rapport à la mesure prise avant la relecture.
+    async function follow(before) {
+      if (!before) return;
+      const grown = await until(() => !before.el.isConnected || before.el.scrollHeight > before.height + 20, 2000);
+      if (!grown || !before.el.isConnected) return;
+      const down = () => {
+        before.el.scrollTop = before.el.scrollHeight;
+      };
+      if (!before.atBottom) return void toast('Nouveau message ↓', '', down, 'conv');
+      down();
+      // Une photo qui finit de charger rallonge le fil : on reste en bas quelques secondes, sauf si l'utilisateur
+      // reprend la main.
+      const stop = () => {
+        before.el.removeEventListener('load', down, true);
+        before.el.removeEventListener('wheel', stop);
+        before.el.removeEventListener('pointerdown', stop);
+      };
+      before.el.addEventListener('load', down, true);
+      before.el.addEventListener('wheel', stop, { passive: true });
+      before.el.addEventListener('pointerdown', stop, { passive: true });
+      setTimeout(stop, 5000);
+    }
+
+    async function callRefresh(what) {
+      const res = await ask('refresh', what, 20000);
+      if (res.reason !== 'no-bridge') spend();
+      if (res.status === 403 || res.status === 429) noteRefusal();
+      if (res.conv === 'error' || res.list === 'error') live.heal = true;
+      return res;
+    }
+
+    // Une seule relecture à la fois ; rien ne s'intercale tant qu'elle n'est pas terminée.
+    async function step(fn) {
+      live.refreshing = true;
+      live.lastRefresh = Date.now();
+      try {
+        await fn();
+      } catch (e) {
+        /* la prochaine passe réessaiera */
+      } finally {
+        live.refreshing = false;
+        decorateInbox();
+      }
+    }
+
+    // Les requêtes de Vinted sont introuvables ou en erreur : trois essais, puis un simple avis « Actualiser ».
+    function giveUp() {
+      if (++live.tries < 3) return;
+      live.listDirty = live.convDirty = false;
+      live.manual = true;
+    }
+
+    // Hausse du compteur, conversation ouverte et utilisateur présent : on la relit (1 requête).
+    async function showNewInConversation() {
+      const conv = openConv();
+      const before = convView();
+      const res = await callRefresh({ conversation: conv });
+      if (res.conv === 'busy') return; // Vinted lit déjà : on repasse dans quelques secondes
+      if (res.conv !== 'ok' && res.conv !== 'fresh') return void giveUp();
+      live.convDirty = live.manual = false;
+      live.tries = 0;
+      if (openConv() === conv && !inbox.busy) follow(before);
+      // La lire l'a marquée comme lue : si le compteur est revenu à sa valeur d'avant la hausse, le message était
+      // ici et la liste n'a pas besoin d'être relue.
+      const n = await pollUnread(0, true);
+      if (typeof n === 'number' && live.preUp !== null && n <= live.preUp) live.listDirty = false;
+      live.preUp = null;
+    }
+
+    // Hausse du compteur pour un message arrivé ailleurs : on relit la liste (au plus toutes les 30 s).
+    async function showNewInList(maxPages) {
+      const res = await callRefresh({ list: true, maxPages });
+      if (res.list === 'busy') return;
+      if (res.list === 'ok' || res.list === 'fresh') {
+        live.listDirty = live.manual = live.skipped = false;
+        live.listAt = Date.now();
+        live.tries = 0;
+      } else if (res.list === 'skipped') {
+        live.listDirty = false;
+        live.skipped = true;
+      } else if (res.list === 'none' && res.reason !== 'no-bridge' && !convRows().length) {
+        live.listDirty = false; // fenêtre étroite : la liste n'est pas affichée, rien à relire
+      } else giveUp();
+    }
+
+    // Après un changement de conversation ou une entrée dans la messagerie : Vinted réaffiche ce qu'il a gardé en
+    // mémoire ; on relit ce qui date d'avant le dernier changement connu. Passe silencieuse.
+    async function afterNavigation(watched) {
+      const changedAt = shared().changedAt;
+      const res = await callRefresh({ list: true, maxPages: 8, listSince: changedAt || 1, conversation: watched ? openConv() : null, convSince: Math.max(changedAt, Date.now() - 2 * MINUTE) });
+      if (res.list === 'ok') live.listAt = Date.now();
+    }
+
+    // Filet de sécurité, utilisateur présent : ce que le compteur ne voit pas (2ᵉ message d'une conversation déjà non
+    // lue, message envoyé depuis un autre appareil). Passe silencieuse, sauf pour suivre un message arrivé.
+    async function safetyPass() {
+      const conv = openConv();
+      const before = convView();
+      const since = Date.now() - 100000;
+      const res = await callRefresh({ list: true, maxPages: 2, listSince: since, conversation: conv, convSince: since });
+      if (res.list === 'ok') live.listAt = Date.now();
+      if (res.conv === 'ok' && openConv() === conv && !inbox.busy) follow(before);
+    }
+
+    // Avis discret, en bas à gauche de la page. action : adresse à ouvrir (vrai lien) ou fonction.
+    function toast(title, text, action, kind) {
+      ensurePageCss();
+      dropToast();
+      const box = doc.createElement('div');
+      box.className = 'cmrv-toast';
+      box.setAttribute('data-cmrv-toast', kind);
+      box.setAttribute('role', 'status');
+      const link = typeof action === 'string';
+      const main = doc.createElement(link ? 'a' : 'button');
+      main.className = 'cmrv-toast-main';
+      if (link) {
+        main.href = action;
+        // En pleine mise en vente, ne pas faire quitter le formulaire.
+        if (/^\/items\/(new|\d+\/edit)/.test(loc.pathname)) Object.assign(main, { target: '_blank', rel: 'noopener' });
+      } else {
+        main.type = 'button';
+        main.addEventListener('click', action);
+      }
+      main.addEventListener('click', () => box.remove());
+      const b = doc.createElement('b');
+      b.textContent = title;
+      main.appendChild(b);
+      if (text) {
+        const span = doc.createElement('span');
+        span.textContent = text.length > 90 ? `${text.slice(0, 90)}…` : text;
+        main.appendChild(span);
+      }
+      const x = doc.createElement('button');
+      x.type = 'button';
+      x.className = 'cmrv-toast-x';
+      x.textContent = '×';
+      x.setAttribute('aria-label', 'Fermer');
+      x.addEventListener('click', () => box.remove());
+      box.append(main, x);
+      doc.body.appendChild(box);
+      setTimeout(() => box.remove(), 12000);
+    }
+
+    // Hors messagerie : « Nouveau message de X » (une lecture de la première page de la liste pour savoir de qui).
+    async function announce() {
+      const s = shared();
+      if (s.changedAt && s.ann >= s.changedAt) return; // déjà annoncé, ici ou dans un autre onglet
+      share({ ann: Date.now() });
+      let found = null;
+      let read = false;
+      try {
+        const r = await root.fetch('/api/v2/inbox?page=1&per_page=5', { headers: { accept: 'application/json' }, credentials: 'same-origin' });
+        spend();
+        if (r.status === 403 || r.status === 429) noteRefusal();
+        if (r.ok) {
+          read = true;
+          found = ((await r.json()).conversations || []).find((c) => c && c.unread) || null;
+        }
+      } catch (e) {
+        /* avis sans nom */
+      }
+      if ((read && !found) || onInbox()) return; // lu entre-temps, ou l'utilisateur est déjà dans la messagerie
+      const who = found && found.opposite_user && found.opposite_user.login;
+      toast(who ? `Nouveau message de ${who}` : 'Nouveau message', (found && found.description) || '', found ? `/inbox/${found.id}` : '/inbox', 'msg');
+    }
+
+    // « (2) Messages | Vinted » dans le titre de l'onglet tant qu'il reste des messages non lus. La valeur vient de
+    // la lecture la plus récente, de cet onglet ou d'un autre ; elle disparaît si plus personne ne lit.
+    function applyTitle(s, now) {
+      const own = live.unread !== null ? { n: live.unread, t: live.t } : null;
+      const other = s.unread !== null ? { n: s.unread, t: s.t } : null;
+      const best = own && other ? (own.t >= other.t ? own : other) : own || other;
+      const n = S.settings.live && !live.stopped && best && now - best.t < 15 * MINUTE ? best.n : 0;
+      const want = n > 0 ? `(${n}) ` : '';
+      const cur = doc.title;
+      const base = live.prefix && cur.startsWith(live.prefix) ? cur.slice(live.prefix.length) : cur;
+      if (cur !== want + base) doc.title = want + base;
+      live.prefix = want;
+    }
+
+    // Texte de l'indicateur, dans la barre « Regroupeur » de la messagerie.
+    function liveBadge() {
+      if (!S.settings.live) return '';
+      if (live.stopped) return '<em class="cmrv-live">session expirée — recharge la page</em>';
+      if (live.manual) {
+        const lose = inbox.armed === 'reload';
+        return `<em class="cmrv-live new">Nouveau message</em><button class="cmrv-btn${lose ? ' armed' : ''}" data-cmrv-act="reload">${lose ? 'Actualiser (le message en cours sera perdu)' : 'Actualiser'}</button>`;
+      }
+      if (live.skipped) return '<em class="cmrv-live new">Nouveaux messages</em><button class="cmrv-btn" data-cmrv-act="relist">Actualiser la liste</button>';
+      const until = blockedUntil();
+      if (Date.now() < until) {
+        const at = new Date(until).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        return `<em class="cmrv-live">en pause — Vinted a refusé une lecture, reprise à ${at}</em>`;
+      }
+      if (Date.now() < live.localPauseUntil || live.errors || overBudget()) return '<em class="cmrv-live">direct en pause — lecture impossible pour le moment</em>';
+      return '<em class="cmrv-live on" title="Les nouveaux messages s’affichent tout seuls, sans recharger la page.">en direct</em>';
+    }
+
+    function liveTick() {
+      const now = Date.now();
+      const vis = doc.visibilityState === 'visible';
+      if (vis) live.lastVisible = now;
+      const s = shared();
+      applyTitle(s, now);
+      const inboxPage = onInbox();
+      // Sans requête : conversations que Vinted ne permet pas de supprimer (lues dans sa liste déjà chargée).
+      if (inboxPage && bridge() && now - live.stateAt > 3000) {
+        live.stateAt = now;
+        ask('state', {}, 3000).then((r) => {
+          if (r.ok && Array.isArray(r.restricted)) inbox.restricted = new Set(r.restricted);
+        });
+      }
+      if (!S.settings.live || live.stopped || inbox.busy) return;
+      if (now < blockedUntil() || now < live.localPauseUntil || root.navigator.onLine === false) return;
+      if (doc.querySelector('[data-testid="header--login-button"]')) return; // déconnecté
+      if (doc.querySelector('iframe[src*="captcha-delivery"],script[src*="captcha-delivery"]')) return; // page de vérification
+
+      const idleMs = now - live.lastActive;
+      const watched = liveWatched({ visible: vis, focused: doc.hasFocus(), idleMs, inputMs: now - live.lastInput });
+
+      // 1. Mettre à jour ce qui est affiché. Jamais pendant une sélection ou une confirmation de suppression (la
+      //    liste ne doit pas bouger sous le curseur), ni après une lecture du compteur en échec.
+      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && !inbox.select && !inbox.armed && now - live.lastRefresh > 3000) {
+        if (live.convDirty && !openConv()) live.convDirty = false;
+        if (live.convDirty && watched) return void step(showNewInConversation);
+        if (live.listDirty && now - live.listAt >= 30000) return void step(() => showNewInList(8));
+        if (live.navAt && now - live.navAt > 1200) {
+          live.navAt = 0;
+          return void step(() => afterNavigation(watched));
+        }
+        if (watched && now - live.lastRefresh > 3 * MINUTE) return void step(safetyPass);
+      }
+      if (live.navAt && now - live.navAt > 30000) live.navAt = 0;
+      if (inboxPage) live.pendingToast = false;
+      else if (vis && live.pendingToast && now - live.visibleAt > 700) {
+        live.pendingToast = false;
+        announce();
+      }
+
+      // 2. Lire le compteur quand c'est le moment.
+      if (live.busy || live.refreshing || now < live.retryAt || overBudget()) return;
+      let every = liveInterval({ inbox: inboxPage, conv: !!openConv(), visible: vis, idleMs, hiddenMs: now - live.lastVisible });
+      if (!every) return;
+      every *= (live.errors ? 2 : 1) * live.jitter;
+      const last = Math.max(live.t, s.t);
+      if (live.unread === null && s.unread !== null && now - last < every) live.unread = s.unread; // valeur lue par un autre onglet ou par la page précédente
+      const stale = vis && s.unread !== null && live.unread !== null && s.unread !== live.unread && now - live.t > 2500;
+      const forced = live.force && vis && now - last > 5000 && now - live.visibleAt > 700;
+      // Onglet caché : Chrome ne réveille la page qu'une fois par minute, d'où la tolérance.
+      if (now - last >= every - (vis ? 0 : 1500) || stale || forced) {
+        live.force = false;
+        pollUnread(every);
+      }
+    }
+
+    function present(e) {
+      live.lastActive = Date.now();
+      if (e && e.isTrusted && e.type !== 'focus') live.lastInput = live.lastActive;
+    }
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'mousemove', 'touchstart']) doc.addEventListener(type, present, { capture: true, passive: true });
+    root.addEventListener('focus', present);
+    doc.addEventListener('visibilitychange', () => {
+      if (doc.visibilityState !== 'visible') return;
+      live.visibleAt = live.lastActive = Date.now();
+      live.force = true;
+    });
+    root.addEventListener('pageshow', (e) => {
+      if (!e.persisted) return;
+      live.visibleAt = Date.now();
+      live.force = true;
+    });
+
     // ---------- Navigation (Vinted change de page sans recharger) ----------
 
     function onNav() {
+      const firstNav = !S.href;
       S.href = loc.href;
+      const wasInbox = live.wasInbox;
+      live.wasInbox = onInbox();
+      live.manual = live.skipped = false;
+      dropToast('conv');
+      if (live.wasInbox) {
+        // Conversation ou liste gardées en mémoire par Vinted : à relire si elles datent.
+        live.navAt = Date.now();
+        if (!wasInbox && !firstNav) live.force = true;
+      }
       const ctx = pageContext(loc.pathname);
       const changed = ctx.sellerId !== S.ctx.sellerId;
       S.ctx = ctx;
@@ -1143,17 +1764,42 @@
       if (S.open && ctx.sellerId) loadIndex();
     }
 
+    let timer = 0;
+    // L'extension a été rechargée ou mise à jour : cette copie du script n'a plus accès à rien et une nouvelle a pris
+    // le relais. Elle s'arrête et retire ce qu'elle avait ajouté à la page.
+    function shutdown() {
+      clearInterval(timer);
+      for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act]')) el.remove();
+      host.remove();
+      S.settings.live = false;
+    }
+
     function tick() {
+      if (typeof chrome !== 'undefined' && chrome.runtime && !chrome.runtime.id) return void shutdown();
       if (!host.isConnected) (doc.body || doc.documentElement).appendChild(host);
       if (loc.href !== S.href) onNav();
       ensurePageCss();
       ensureSearchBar();
       const bar = doc.querySelector('[data-cmrv-bar]');
       $('.launch').hidden = S.open || !!(bar && visible(bar));
+      liveTick();
       decorateInbox();
       decorate();
       if (S.load.state === 'blocked' || S.load.state === 'error') if (harvestDom() && S.open) renderAll();
       if (syncPage() && S.open) renderAll();
+    }
+
+    // Réglage modifié dans un autre onglet : appliqué ici tout de suite (un onglet caché n'est réveillé qu'une fois
+    // par minute).
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local' || !changes['cmrv.settings']) return;
+        Object.assign(S.settings, changes['cmrv.settings'].newValue || {});
+        applyTitle(shared(), Date.now());
+        decorateInbox();
+        decorate();
+        if (S.open) renderAll();
+      });
     }
 
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
@@ -1171,10 +1817,10 @@
       (doc.body || doc.documentElement).appendChild(host);
       onNav();
       if (ui.open && S.ctx.sellerId) setOpen(true);
-      setInterval(tick, 800);
+      timer = setInterval(tick, 800);
       tick();
     })();
   }
 
-  return { norm, tokens, near, scoreItem, searchItems, searchList, parseEuro, euro, cardTitleFromAlt, pageContext, bundleUrl, bundleEstimate, fromApiItem, start };
+  return { norm, tokens, near, scoreItem, searchItems, searchList, parseEuro, euro, cardTitleFromAlt, pageContext, bundleUrl, bundleEstimate, fromApiItem, liveInterval, liveWatched, liveDecide, start };
 });
