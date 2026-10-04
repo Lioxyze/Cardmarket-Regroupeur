@@ -167,14 +167,31 @@
   const MINUTE = 60000;
   const fin = (v) => (typeof v === 'number' && isFinite(v) ? v : 0);
 
+  // Délai entre deux lectures de la « tête de liste » de la messagerie (sa conversation la plus récente, 4 Ko), en
+  // ms ; 0 = ne pas lire. Elle change dès qu'un message arrive ou part, dans n'importe quelle conversation.
+  //   utilisateur actif depuis moins de 2 min : 3 s ; jusqu'à 5 min : 6 s ; 15 min : 20 s ; 30 min : 60 s ; puis arrêt
+  function liveHeadInterval(idleMs) {
+    return idleMs < 2 * MINUTE ? 3000 : idleMs < 5 * MINUTE ? 6000 : idleMs < 15 * MINUTE ? 20000 : idleMs < 30 * MINUTE ? MINUTE : 0;
+  }
+
+  // Ce qui a changé entre deux lectures de la tête de liste ({ id, at, unread }) :
+  // 'first' (référence), 'same', 'read' (seul l'état lu / non lu a changé), 'new' (un message est arrivé ou parti).
+  function liveHeadChange(prev, next) {
+    if (!prev) return 'first';
+    if (prev.id === next.id && prev.at === next.at) return prev.unread === next.unread ? 'same' : 'read';
+    return 'new';
+  }
+
   // Délai entre deux lectures du compteur de messages non lus, en ms ; 0 = ne pas lire.
-  //   conversation ouverte, utilisateur actif : 7 s ; messagerie sans conversation ouverte : 15 s
+  //   messagerie, tête de liste suivie (c.head) : 30 s, le compteur ne sert plus qu'à la pastille et au titre
+  //   sinon, conversation ouverte, utilisateur actif : 7 s ; messagerie sans conversation ouverte : 15 s
   //   3 à 15 min sans activité : 20 s ; 15 à 30 min : 60 s ; au-delà : arrêt jusqu'au prochain geste
   //   autre page de Vinted : 60 s, puis 3 min, puis arrêt
   //   onglet caché : 60 s pendant 10 min, 2 min jusqu'à 30 min (titre de l'onglet), puis arrêt
   function liveInterval(c) {
     if (!c.visible) return c.hiddenMs < 10 * MINUTE ? MINUTE : c.hiddenMs < 30 * MINUTE ? 2 * MINUTE : 0;
     if (c.idleMs >= 30 * MINUTE) return 0;
+    if (c.inbox && c.head) return c.idleMs < 15 * MINUTE ? 30000 : MINUTE;
     if (c.inbox) return c.idleMs < 3 * MINUTE ? (c.conv ? 7000 : 15000) : c.idleMs < 15 * MINUTE ? 20000 : MINUTE;
     return c.idleMs < 15 * MINUTE ? MINUTE : 3 * MINUTE;
   }
@@ -1009,6 +1026,7 @@
       .cmrv-btn:disabled{opacity:.5;cursor:default}
       .cmrv-del{position:absolute;right:8px;bottom:6px;z-index:2;opacity:.55}
       .cmrv-del:hover,.cmrv-del.armed,.cmrv-del.on{opacity:1}
+      .cmrv-new{position:absolute;left:5px;top:50%;width:9px;height:9px;margin-top:-4px;border-radius:50%;background:#007782;box-shadow:0 0 0 2px rgba(0,119,130,.25);pointer-events:none}
       .cmrv-live{font-style:normal;font-size:12px;opacity:.75;white-space:nowrap}
       .cmrv-live.on::before{content:'';display:inline-block;width:7px;height:7px;margin-right:5px;border-radius:50%;background:#1a9c5b;vertical-align:1px}
       .cmrv-live.new{opacity:1;font-weight:600;color:#007782}
@@ -1054,7 +1072,7 @@
 
     const TRASH =
       '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" style="display:block"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.5h6.8l.6-8.5M6.7 7v4M9.3 7v4"/></svg>';
-    const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '', note: '', restricted: new Set() };
+    const inbox = { busy: false, select: false, picked: new Set(), armed: null, timer: 0, msg: '', note: '', restricted: new Set(), unread: new Map(), opened: new Map() };
     const convRow = (id) => doc.querySelector(`[data-testid="inbox-list-item-${id}"]`);
     const convRows = () => [...doc.querySelectorAll('[data-testid^="inbox-list-item-"]')].filter((el) => /^inbox-list-item-\d+$/.test(el.getAttribute('data-testid')));
     const convId = (el) => el.getAttribute('data-testid').slice('inbox-list-item-'.length);
@@ -1219,6 +1237,17 @@
           row.appendChild(b);
         }
         if (b.dataset.id !== id) b.dataset.id = id; // React peut réutiliser une ligne pour une autre conversation
+        // Pastille « nouveau message » : Vinted ne met qu'un fond discret sur une conversation non lue.
+        let dot = row.querySelector('[data-cmrv-new]');
+        if (isNewConversation(id)) {
+          if (!dot) {
+            dot = doc.createElement('span');
+            dot.className = 'cmrv-new';
+            dot.setAttribute('data-cmrv-new', '');
+            dot.title = 'Nouveau message';
+            row.appendChild(dot);
+          }
+        } else if (dot) dot.remove();
         const locked = inbox.restricted.has(id);
         const on = inbox.select && !locked && inbox.picked.has(id);
         const armed = !inbox.select && !locked && inbox.armed === id;
@@ -1266,7 +1295,7 @@
     // Un seul onglet lit à la fois (verrou + heure partagée dans localStorage).
 
     const LIVE_KEY = 'cmrv.live';
-    const LIVE_BUDGET = 700; // lectures par heure, tous onglets confondus
+    const LIVE_BUDGET = 1800; // lectures par heure, tous onglets confondus
     const started = Date.now();
     const live = {
       busy: false, // lecture du compteur en cours
@@ -1300,10 +1329,14 @@
       pendingToast: false,
       prefix: '',
       stateAt: 0,
+      listPages: 0, // pages de la liste chargées par Vinted (5 conversations chacune)
       pausedAt: 0, // dernier instant passé en pause
       draft: 0, // longueur du message en cours de saisie
       sentAt: 0, // dernière fois que la zone de saisie s'est vidée : un message vient de partir
     };
+    // Tête de liste : détecteur rapide de la messagerie. 'off' si Vinted ne sert plus cette lecture (autre version de
+    // sa messagerie) : on retombe alors sur le compteur seul.
+    const head = { mode: 'on', sig: null, at: 0, busy: false, fails: 0, errors: 0, jitter: 1, fresh: new Map() };
     const onInbox = () => /^\/inbox(\/|$)/.test(loc.pathname);
     const openConv = () => {
       const m = loc.pathname.match(/^\/inbox\/([^/]+)/);
@@ -1455,7 +1488,9 @@
             live.heal = false;
             if (live.tries < 3) live.listDirty = live.convDirty = true;
           }
-          if (kind === 'up') {
+          if (kind === 'up' && onInbox() && head.mode === 'on') {
+            // Dans la messagerie, c'est la tête de liste qui dit quoi relire ; le compteur ne sert qu'à la pastille.
+          } else if (kind === 'up') {
             // Plusieurs hausses avant d'avoir pu relire : on garde la valeur la plus basse comme point de départ.
             live.preUp = live.preUp === null ? prev : Math.min(live.preUp, prev);
             live.listDirty = live.convDirty = true;
@@ -1480,6 +1515,59 @@
       } finally {
         live.busy = false;
       }
+    }
+
+    // Lit la conversation la plus récente de la messagerie. Si elle a changé, un message est arrivé (ou a été envoyé
+    // depuis un autre appareil) : dans la conversation ouverte, on la relit ; ailleurs, on relit la liste.
+    async function pollHead() {
+      head.busy = true;
+      head.at = Date.now();
+      head.jitter = 0.85 + Math.random() * 0.3;
+      try {
+        const signal = root.AbortSignal && root.AbortSignal.timeout ? root.AbortSignal.timeout(8000) : undefined;
+        const r = await root.fetch('/api/v2/inbox?page=1&per_page=1', { headers: { accept: 'application/json' }, credentials: 'same-origin', signal });
+        spend();
+        if (r.status === 403 || r.status === 429) return void noteRefusal();
+        if (r.status === 401) return void (live.stopped = true);
+        if (!r.ok) {
+          if (++head.fails >= 2) head.mode = 'off';
+          return;
+        }
+        const c = ((await r.json()).conversations || [])[0] || null;
+        head.fails = head.errors = 0;
+        const next = { id: c ? String(c.id) : '', at: c ? String(c.updated_at || '') : '', unread: !!(c && c.unread) };
+        const kind = liveHeadChange(head.sig, next);
+        head.sig = next;
+        if (kind === 'first' || kind === 'same') return;
+        live.force = true; // pastille du bandeau et titre de l'onglet
+        if (kind !== 'new') return;
+        share({ changedAt: Date.now() });
+        live.tries = 0;
+        if (next.id && next.id === openConv()) live.convDirty = true;
+        else {
+          live.listDirty = true;
+          if (next.unread) head.fresh.set(next.id, Date.now()); // pastille tout de suite, avant même la relecture de la liste
+        }
+      } catch (e) {
+        // Réseau coupé ou délai dépassé : un second essai deux fois plus tard, puis silence.
+        if (++head.errors >= 2) {
+          head.errors = 0;
+          live.localPauseUntil = Date.now() + PAUSE;
+        }
+      } finally {
+        head.busy = false;
+        decorateInbox();
+      }
+    }
+
+    // Faut-il la pastille « nouveau message » sur cette ligne ? Non lue d'après la liste de Vinted (ou d'après la tête
+    // de liste, plus fraîche), sauf si elle est ouverte ou l'a été depuis son dernier message.
+    function isNewConversation(id) {
+      if (!S.settings.live || id === openConv()) return false;
+      if (head.fresh.has(id)) return true;
+      if (!inbox.unread.has(id)) return false;
+      const at = Date.parse(inbox.unread.get(id));
+      return !(inbox.opened.get(id) >= at);
     }
 
     // Fil de la conversation ouverte : élément qui défile, pour rester en bas quand un message arrive.
@@ -1611,7 +1699,7 @@
       const t0 = Date.now();
       const res = await callRefresh({ conversation: conv, convSince: t0 - 8000 });
       // Requête de Vinted introuvable ou en erreur : on n'insiste pas, nouvel essai dans une minute.
-      live.pulseAt = t0 + (res.conv === 'ok' || res.conv === 'fresh' || res.conv === 'busy' ? 10000 : MINUTE);
+      live.pulseAt = t0 + (res.conv === 'ok' || res.conv === 'fresh' || res.conv === 'busy' ? (head.mode === 'on' ? 20000 : 10000) : MINUTE);
       if (res.conv !== 'ok') return;
       if (openConv() === conv && !inbox.busy) follow(before);
       await rereadIfSent(conv, t0);
@@ -1721,7 +1809,7 @@
         const at = new Date(until).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
         return `<em class="cmrv-live">en pause — Vinted a refusé une lecture, reprise à ${at}</em>`;
       }
-      if (Date.now() < live.localPauseUntil || live.errors || overBudget()) return '<em class="cmrv-live">direct en pause — lecture impossible pour le moment</em>';
+      if (Date.now() < live.localPauseUntil || live.errors || head.errors || overBudget()) return '<em class="cmrv-live">direct en pause — lecture impossible pour le moment</em>';
       return '<em class="cmrv-live on" title="Les nouveaux messages s’affichent tout seuls, sans recharger la page.">en direct</em>';
     }
 
@@ -1741,8 +1829,19 @@
       if (inboxPage && bridge() && now - live.stateAt > 3000) {
         live.stateAt = now;
         ask('state', {}, 3000).then((r) => {
-          if (r.ok && Array.isArray(r.restricted)) inbox.restricted = new Set(r.restricted);
+          if (!r.ok) return;
+          if (Array.isArray(r.restricted)) inbox.restricted = new Set(r.restricted);
+          if (Array.isArray(r.unread)) inbox.unread = new Map(r.unread);
+          live.listPages = fin(r.pages);
         });
+      }
+      if (inboxPage) {
+        const open = openConv();
+        if (open) {
+          inbox.opened.set(open, now);
+          head.fresh.delete(open);
+        }
+        for (const [id, at] of head.fresh) if (now - at > MINUTE || inbox.unread.has(id)) head.fresh.delete(id);
       }
       if (!S.settings.live || live.stopped || inbox.busy) return;
       if (now < blockedUntil() || now < live.localPauseUntil) {
@@ -1760,10 +1859,11 @@
       //    liste ne doit pas bouger sous le curseur), ni après une lecture du compteur en échec.
       //    Après une pause, une lecture du compteur (légère) doit d'abord avoir réussi, dans cet onglet ou un autre.
       const tested = Math.max(live.t, s.t) >= live.pausedAt;
-      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && tested && !inbox.select && !inbox.armed && now - live.lastRefresh > 3000 && !overBudget()) {
+      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && tested && !inbox.select && !inbox.armed && now - live.lastRefresh > 2000 && !overBudget()) {
         if (live.convDirty && !openConv()) live.convDirty = false;
         if (live.convDirty && watched) return void step(showNewInConversation);
-        if (live.listDirty && now - live.listAt >= 30000) return void step(() => showNewInList(8));
+        // Liste courte : relue tout de suite (2 requêtes au plus) ; liste longue : au plus toutes les 30 s.
+        if (live.listDirty && now - live.listAt >= (live.listPages > 2 ? 30000 : 4000)) return void step(() => showNewInList(8));
         if (live.navAt && now - live.navAt > 1200) {
           live.navAt = 0;
           return void step(() => afterNavigation(watched));
@@ -1778,9 +1878,16 @@
         announce();
       }
 
-      // 2. Lire le compteur quand c'est le moment.
+      // 2. Tête de liste : toutes les 3 s quand l'utilisateur est actif dans la messagerie, onglet visible.
+      const headOn = inboxPage && head.mode === 'on';
+      if (vis && headOn && !head.busy && !live.refreshing && !overBudget()) {
+        const gap = liveHeadInterval(idleMs) * (head.errors ? 2 : 1) * head.jitter;
+        if (gap && now - head.at >= gap) pollHead();
+      }
+
+      // 3. Lire le compteur quand c'est le moment.
       if (live.busy || live.refreshing || now < live.retryAt || overBudget()) return;
-      let every = liveInterval({ inbox: inboxPage, conv: !!openConv() && !watched, visible: vis, idleMs, hiddenMs: now - live.lastVisible });
+      let every = liveInterval({ inbox: inboxPage, head: headOn, conv: !!openConv() && !watched, visible: vis, idleMs, hiddenMs: now - live.lastVisible });
       if (!every) return;
       every *= (live.errors ? 2 : 1) * live.jitter;
       const last = Math.max(live.t, s.t);
@@ -1856,7 +1963,7 @@
       live.prefix = '';
       ship.queue = [];
       ship.queued.clear();
-      for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act]')) el.remove();
+      for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act],[data-cmrv-new]')) el.remove();
       host.remove();
       S.settings.live = false;
     }
@@ -1909,5 +2016,5 @@
     })();
   }
 
-  return { norm, tokens, near, scoreItem, searchItems, searchList, parseEuro, euro, cardTitleFromAlt, pageContext, bundleUrl, bundleEstimate, fromApiItem, liveInterval, liveWatched, liveDecide, start };
+  return { norm, tokens, near, scoreItem, searchItems, searchList, parseEuro, euro, cardTitleFromAlt, pageContext, bundleUrl, bundleEstimate, fromApiItem, liveInterval, liveHeadInterval, liveHeadChange, liveWatched, liveDecide, start };
 });

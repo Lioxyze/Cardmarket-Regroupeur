@@ -164,3 +164,19 @@ test('direct : seule une hausse du compteur déclenche une relecture', () => {
   const seq = [0, 1, 0];
   assert.equal(seq.slice(1).filter((n, i) => V.liveDecide(seq[i], n) === 'up').length, 1);
 });
+
+test('direct : tête de liste, cadence et changements', () => {
+  assert.equal(V.liveHeadInterval(0), 3000); // utilisateur actif
+  assert.equal(V.liveHeadInterval(3 * MIN), 6000);
+  assert.equal(V.liveHeadInterval(10 * MIN), 20000);
+  assert.equal(V.liveHeadInterval(20 * MIN), MIN);
+  assert.equal(V.liveHeadInterval(31 * MIN), 0); // onglet oublié : arrêt
+  const a = { id: '1', at: '2026-10-04T10:00:00Z', unread: false };
+  assert.equal(V.liveHeadChange(null, a), 'first');
+  assert.equal(V.liveHeadChange(a, { ...a }), 'same');
+  assert.equal(V.liveHeadChange({ ...a, unread: true }, a), 'read'); // lue : rien à relire
+  assert.equal(V.liveHeadChange(a, { ...a, at: '2026-10-04T10:00:05Z' }), 'new'); // message dans la même conversation
+  assert.equal(V.liveHeadChange(a, { id: '2', at: '2026-10-04T10:00:05Z', unread: true }), 'new'); // message ailleurs
+  // dans la messagerie, tête de liste suivie : le compteur ne sert plus qu'à la pastille
+  assert.equal(V.liveInterval({ inbox: true, head: true, conv: true, visible: true, idleMs: 0, hiddenMs: 0 }), 30000);
+});

@@ -191,14 +191,20 @@
   // Lecture seule de la liste déjà chargée : conversations que Vinted ne permet pas de supprimer.
   function state() {
     const restricted = [];
+    const unread = []; // [identifiant, date du dernier message] des conversations non lues
+    let pages = 0;
     for (const o of pick(scan().list, LIST)) {
-      for (const page of pagesOf(o)) {
+      const all = pagesOf(o);
+      pages = Math.max(pages, all.length);
+      for (const page of all) {
         for (const c of (page && page.conversations) || []) {
-          if (c && (c.is_deletion_restricted || c.isDeletionRestricted)) restricted.push(String(c.id));
+          if (!c) continue;
+          if (c.is_deletion_restricted || c.isDeletionRestricted) restricted.push(String(c.id));
+          if (c.unread) unread.push([String(c.id), String(c.updated_at || '')]);
         }
       }
     }
-    return { ok: true, restricted };
+    return { ok: true, restricted, unread, pages };
   }
 
   window.addEventListener('cmrv:req', async (e) => {

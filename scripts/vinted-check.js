@@ -96,7 +96,8 @@ function freshInbox() {
     Object.assign({ id, description: `Dernier message de ${login}`, unread: false, updated_at: '2026-10-04T10:00:00+02:00', is_deletion_restricted: false, opposite_user: { id: id + 1000, login } }, extra);
   return {
     block: false, // 403 sur le compteur
-    fail: false, // panne réseau sur le compteur
+    fail: false, // panne réseau sur le compteur et la tête de liste
+    headGone: false, // la lecture « tête de liste » n'existe plus (404)
     convs: [conv(101, 'alice'), conv(102, 'bob'), conv(103, 'chloe', { is_deletion_restricted: true }), conv(104, 'david'), conv(105, 'emma'), conv(106, 'farid')],
     messages: {},
   };
@@ -106,6 +107,13 @@ const thread = (id) => (BOX.messages[id] = BOX.messages[id] || ['Bonjour', 'Touj
 function receive(id, text) {
   const c = BOX.convs.find((x) => x.id === id);
   Object.assign(c, { unread: true, description: text, updated_at: new Date().toISOString() });
+  thread(id).push(text);
+  BOX.convs = [c, ...BOX.convs.filter((x) => x !== c)];
+}
+// Message envoyé par l'utilisateur lui-même depuis un autre appareil : rien ne devient « non lu ».
+function sendFromPhone(id, text) {
+  const c = BOX.convs.find((x) => x.id === id);
+  Object.assign(c, { description: text, updated_at: new Date().toISOString() });
   thread(id).push(text);
   BOX.convs = [c, ...BOX.convs.filter((x) => x !== c)];
 }
@@ -269,7 +277,7 @@ async function main() {
     page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
     // Les refus 403 simulés et l'icône absente du faux site ne sont pas des erreurs de l'extension.
     page.on('console', (m) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errors.push('console: ' + m.text()));
-    const hits = { wardrobe: 0, shipping: 0, blocked: false, stats: 0, inbox: 0, conv: 0 };
+    const hits = { wardrobe: 0, shipping: 0, blocked: false, stats: 0, inbox: 0, conv: 0, head: 0 };
     await page.setRequestInterception(true);
     const handle = (req) => {
       const url = new URL(req.url());
@@ -280,6 +288,13 @@ async function main() {
         hits.stats++;
         if (BOX.fail) return req.abort('failed');
         return BOX.block ? json({}, 403) : json({ unread_msg_count: BOX.convs.filter((c) => c.unread).length, code: 0 });
+      }
+      if (url.pathname === '/api/v2/inbox' && url.searchParams.get('per_page') === '1') {
+        // Tête de liste : la conversation la plus récente, seule.
+        hits.head++;
+        if (BOX.fail) return req.abort('failed');
+        if (BOX.block || BOX.headGone) return json({}, BOX.block ? 403 : 404);
+        return json({ conversations: BOX.convs.slice(0, 1), pagination: { current_page: 1, per_page: 1, total_entries: BOX.convs.length, total_pages: BOX.convs.length }, code: 0 });
       }
       if (url.pathname === '/api/v2/inbox') {
         hits.inbox++;
@@ -515,6 +530,7 @@ async function main() {
     const msgs = () => page.evaluate(() => document.querySelectorAll('[data-testid="conversation-message"]').length);
     const badge = () => page.evaluate(() => document.querySelector('[data-testid="header-conversations-button"]').textContent);
     const rowText = (id) => page.evaluate((i) => (document.querySelector(`[data-testid="inbox-list-item-${i}"] span`) || {}).textContent || '', id);
+    const dot = (id) => page.evaluate((i) => !!document.querySelector(`[data-testid="inbox-list-item-${i}"] [data-cmrv-new]`), id);
     // L'utilisateur est devant la page : un mouvement de souris.
     let wiggle = 0;
     const here = () => page.mouse.move(300 + (wiggle++ % 40), 300);
@@ -530,48 +546,61 @@ async function main() {
       document.querySelector('[data-testid="composer--input"]').value = 'brouillon en cours';
     });
     await here();
-    await sleep(2500);
-    const c0 = { conv: hits.conv, inbox: hits.inbox, stats: hits.stats };
+    await sleep(4000);
+    const c0 = { conv: hits.conv, inbox: hits.inbox, stats: hits.stats, head: hits.head };
+    let t0 = Date.now();
     receive(104, 'Oui, toujours disponible !');
-    ok(await waitFor(async () => (await msgs()) === 3, 18000), 'le nouveau message apparaît tout seul, sans recharger');
+    ok(await waitFor(async () => (await msgs()) === 3, 9000), `le nouveau message apparaît tout seul, sans recharger, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    ok(Date.now() - t0 < 6500, 'en moins de 6 secondes');
     ok((await page.evaluate(() => document.querySelector('[data-testid="composer--input"]').value)) === 'brouillon en cours', 'le message en cours de saisie est conservé');
     ok(await waitFor(() => page.evaluate(() => {
       const box = document.querySelector('[data-testid="conversation-content"]');
       return box.scrollHeight - box.scrollTop - box.clientHeight < 5;
     })), 'le fil reste en bas, sur le nouveau message');
-    ok(await waitFor(async () => /Messages 0$/.test(await badge()), 6000), `la pastille revient à 0 aussitôt la conversation lue (${await badge()})`);
-    await sleep(9000);
-    ok(hits.conv - c0.conv <= 3 && hits.inbox === c0.inbox, `en 12 s : ${hits.conv - c0.conv} lectures de la conversation, ${hits.inbox - c0.inbox} de la liste, ${hits.stats - c0.stats} du compteur`);
+    ok(await waitFor(async () => /Messages 0$/.test(await badge()), 9000), `la pastille du bandeau revient à 0 une fois la conversation lue (${await badge()})`);
+    await sleep(6000);
+    ok(hits.conv - c0.conv <= 2 && hits.inbox === c0.inbox, `pour ce message : ${hits.conv - c0.conv} lecture(s) de la conversation, ${hits.inbox - c0.inbox} de la liste, ${hits.stats - c0.stats} du compteur, ${hits.head - c0.head} de la tête de liste`);
     // Message envoyé par l'utilisateur depuis son téléphone : le compteur de non-lus ne bouge pas.
     await here();
-    thread(104).push('Envoyé depuis mon téléphone');
-    ok(await waitFor(async () => (await msgs()) === 4, 14000), 'un message envoyé depuis un autre appareil apparaît aussi (conversation relue toutes les 10 s)');
+    t0 = Date.now();
+    sendFromPhone(104, 'Envoyé depuis mon téléphone');
+    ok(await waitFor(async () => (await msgs()) === 4, 9000) && Date.now() - t0 < 6500, `un message envoyé depuis un autre appareil apparaît aussi, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
     console.log('15. Messages en direct : nouveau message dans une autre conversation');
     await here();
+    await sleep(4500);
     const c1 = { conv: hits.conv, inbox: hits.inbox };
+    t0 = Date.now();
     receive(105, 'Bonjour, je prends le lot');
-    ok(await waitFor(async () => /^● emma — Bonjour, je prends le lot/.test(await rowText(105)), 50000), `la liste se met à jour : ${await rowText(105)}`);
-    ok(await waitFor(async () => /Messages 1$/.test(await badge()) && /^\(1\) /.test(await page.title())), `pastille et titre de l’onglet : ${await badge()} ; « ${await page.title()} »`);
-    ok(hits.inbox - c1.inbox === 1 && (await msgs()) === 4, `une seule lecture de la liste (${hits.inbox - c1.inbox})`);
+    ok(await waitFor(() => dot(105), 7000), `pastille « nouveau message » sur la ligne, en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+    ok(await waitFor(async () => /^● emma — Bonjour, je prends le lot/.test(await rowText(105)), 9000), `la liste affiche le message, en ${((Date.now() - t0) / 1000).toFixed(1)} s : ${await rowText(105)}`);
+    ok(await waitFor(async () => /Messages 1$/.test(await badge()) && /^\(1\) /.test(await page.title()), 9000), `pastille du bandeau et titre de l’onglet : ${await badge()} ; « ${await page.title()} »`);
+    ok(hits.inbox - c1.inbox === 1 && (await msgs()) === 4 && !(await dot(104)), `une seule lecture de la liste (${hits.inbox - c1.inbox}), rien sur la conversation ouverte`);
     ok(!(await page.evaluate(() => window.refetches.includes('inbox-conversations'))), 'les requêtes que Vinted a désactivées ne sont pas relancées');
     await sleep(3000);
-    const quiet = { stats: hits.stats, inbox: hits.inbox, conv: hits.conv };
+    const quiet = { stats: hits.stats, inbox: hits.inbox, conv: hits.conv, head: hits.head };
     await sleep(15000);
-    ok(hits.stats - quiet.stats >= 1 && hits.stats - quiet.stats <= 3 && hits.inbox === quiet.inbox && hits.conv - quiet.conv <= 2, `au repos, en 15 s : ${hits.stats - quiet.stats} lectures du compteur, ${hits.conv - quiet.conv} de la conversation, aucune de la liste`);
+    ok(hits.head - quiet.head >= 3 && hits.head - quiet.head <= 7 && hits.stats - quiet.stats <= 2 && hits.inbox === quiet.inbox && hits.conv - quiet.conv <= 1, `au repos, en 15 s : ${hits.head - quiet.head} lectures de la tête de liste, ${hits.stats - quiet.stats} du compteur, ${hits.conv - quiet.conv} de la conversation, aucune de la liste`);
     await shot('direct');
+    await press('[data-testid="inbox-list-item-105"]');
+    await sleep(1500);
+    await press('[data-testid="inbox-list-item-104"]');
+    await sleep(1500);
+    ok(!(await dot(105)), 'la pastille disparaît une fois la conversation ouverte');
 
     console.log('16. Onglet caché : rien n’est relu, puis rattrapage au retour');
     const other = await browser.newPage();
     await other.bringToFront();
     if (!(await waitFor(() => page.evaluate(() => document.visibilityState === 'hidden'), 4000))) console.log('  (ignoré : ce Chrome ne signale pas l’onglet comme caché)');
     else {
-      const c2 = hits.conv;
+      await sleep(1500);
+      const c2 = { conv: hits.conv, head: hits.head };
+      const n2 = await msgs();
       receive(104, 'Tu es là ?');
       await sleep(9000);
-      ok(hits.conv === c2 && (await msgs()) === 4, 'onglet caché : la conversation n’est pas relue (elle serait marquée lue sans avoir été vue)');
+      ok(hits.conv === c2.conv && hits.head === c2.head && (await msgs()) === n2, 'onglet caché : aucune lecture, la conversation n’est pas relue (elle serait marquée lue sans avoir été vue)');
       await page.bringToFront();
-      ok(await waitFor(async () => (await msgs()) === 5, 12000), 'retour sur l’onglet : le message apparaît');
+      ok(await waitFor(async () => (await msgs()) === n2 + 1, 9000), 'retour sur l’onglet : le message apparaît');
     }
     await other.close();
     await page.bringToFront();
@@ -584,7 +613,7 @@ async function main() {
     const i1 = hits.inbox;
     const before102 = await rowText(102);
     receive(102, 'Encore disponible ?');
-    ok(await waitFor(async () => /nouveau message/.test(await ibar()), 24000), `prévenu, sans rien déplacer : ${(await ibar()).replace(/\n/g, ' | ')}`);
+    ok(await waitFor(async () => /nouveau message/.test(await ibar()), 9000), `prévenu, sans rien déplacer : ${(await ibar()).replace(/\n/g, ' | ')}`);
     await sleep(4000);
     ok(hits.inbox === i1 && (await rowText(102)) === before102, 'liste intacte tant que la sélection est en cours');
     await press('[data-cmrv-act="delsel"]');
@@ -595,7 +624,7 @@ async function main() {
     console.log('18. Deux onglets : une seule lecture du compteur');
     const tab2 = await browser.newPage();
     await tab2.setRequestInterception(true);
-    tab2.on("request", handle);
+    tab2.on('request', handle);
     await tab2.goto(`${SITE}/inbox`);
     await page.reload();
     await waitFor(() => tab2.evaluate(() => !!document.getElementById('cmrv-host')));
@@ -622,7 +651,7 @@ async function main() {
     await sleep(2500);
     await page.bringToFront();
     await sleep(1500);
-    const s1 = hits.stats;
+    const s1 = { stats: hits.stats, head: hits.head };
     receive(106, 'Dispo pour un échange ?');
     // Hors messagerie, le compteur n'est lu qu'une fois par minute ; revenir sur l'onglet le fait lire tout de suite.
     await page.evaluate(() => window.ageCache());
@@ -632,7 +661,7 @@ async function main() {
     ok(await waitFor(() => page.evaluate(() => !!document.querySelector('[data-cmrv-toast="msg"]')), 9000), 'avis affiché');
     const toastText = await page.evaluate(() => (document.querySelector('[data-cmrv-toast]') || {}).innerText || '');
     ok(/Nouveau message de farid/.test(toastText) && /échange/.test(toastText), toastText.replace(/\n/g, ' | '));
-    ok(/^\(\d+\) /.test(await page.title()) && hits.stats - s1 === 1, `titre de l’onglet « ${await page.title()} », ${hits.stats - s1} lecture du compteur`);
+    ok(/^\(\d+\) /.test(await page.title()) && hits.stats - s1.stats === 1 && hits.head === s1.head, `titre de l’onglet « ${await page.title()} », ${hits.stats - s1.stats} lecture du compteur, aucune de la tête de liste hors messagerie`);
     await shot('avis');
     await Promise.all([page.waitForNavigation(), page.evaluate(() => document.querySelector('.cmrv-toast-main').click())]);
     ok(page.url() === `${SITE}/inbox/106`, `un clic sur l’avis ouvre la conversation : ${page.url().replace(SITE, '')}`);
@@ -647,13 +676,13 @@ async function main() {
 
     console.log('20. Vinted refuse une lecture : tout se met en pause, partout');
     await hostReady();
+    await here();
     ok(await waitFor(async () => /en direct/.test(await ibar())), 'en direct avant le refus');
     BOX.block = true;
-    await rewind();
     ok(await waitFor(async () => /en pause — Vinted a refusé/.test(await ibar()), 9000), `indicateur : ${(await ibar()).replace(/\n/g, ' | ')}`);
-    const s2 = hits.stats;
+    const s2 = { stats: hits.stats, head: hits.head, conv: hits.conv };
     await sleep(9000);
-    ok(hits.stats === s2, 'plus aucune lecture pendant la pause');
+    ok(hits.stats === s2.stats && hits.head === s2.head && hits.conv === s2.conv, 'plus aucune lecture pendant la pause');
     BOX.block = false;
     const sh0 = hits.shipping;
     await page.goto(`${SITE}/`);
@@ -675,19 +704,37 @@ async function main() {
     ok(await waitFor(async () => /en direct/.test(await ibar())), 'en direct au départ');
     await press('[data-testid="inbox-list-item-104"]');
     await here();
-    await sleep(2000);
+    await sleep(4000);
     BOX.fail = true;
-    const s5 = hits.stats;
-    await page.evaluate(() => window.ageCache());
-    ok(await waitFor(async () => /lecture impossible/.test(await ibar()), 26000), `indicateur honnête dès le premier échec : ${(await ibar()).replace(/\n/g, ' | ')}`);
-    const c5 = { conv: hits.conv, inbox: hits.inbox };
-    await page.evaluate(() => window.ageCache());
-    ok(await waitFor(async () => hits.stats - s5 === 2, 45000), 'un second essai, deux fois plus tard');
+    const h5 = hits.head;
+    ok(await waitFor(async () => /lecture impossible/.test(await ibar()), 9000), `indicateur honnête dès le premier échec : ${(await ibar()).replace(/\n/g, ' | ')}`);
+    ok(await waitFor(async () => hits.head - h5 === 2, 15000), 'un second essai, deux fois plus tard');
+    await sleep(3000);
+    const c5 = { conv: hits.conv, inbox: hits.inbox, stats: hits.stats, head: hits.head };
     await sleep(12000);
-    ok(hits.stats - s5 === 2 && hits.conv === c5.conv && hits.inbox === c5.inbox, `puis silence : ${hits.stats - s5} lectures du compteur, aucune relecture de la messagerie`);
+    ok(hits.head === c5.head && hits.stats === c5.stats && hits.conv === c5.conv && hits.inbox === c5.inbox, 'puis silence : plus aucune lecture');
     BOX.fail = false;
 
-    console.log('22. Page sans pastille de messages : lecture directe, sans insister');
+    console.log('22. Tête de liste indisponible : retour à la lecture du compteur');
+    await page.evaluate(() => {
+      localStorage.removeItem('cmrv.block');
+      localStorage.removeItem('cmrv.live');
+    });
+    BOX = freshInbox();
+    BOX.headGone = true;
+    const h6 = hits.head;
+    await page.goto(`${SITE}/inbox`);
+    await hostReady();
+    await press('[data-testid="inbox-list-item-104"]');
+    await here();
+    ok(await waitFor(async () => hits.head - h6 === 2, 12000), 'deux essais, puis on n’insiste pas');
+    await here();
+    receive(104, 'Toujours là ?');
+    ok(await waitFor(async () => (await msgs()) === 3, 30000), 'le message apparaît quand même, par le compteur');
+    ok(hits.head - h6 === 2 && /en direct/.test(await ibar()), `tête de liste abandonnée (${hits.head - h6} lectures), indicateur : ${(await ibar()).replace(/\n/g, ' | ')}`);
+    BOX.headGone = false;
+
+    console.log('23. Page sans pastille de messages : lecture directe, sans insister');
     await page.evaluate(() => {
       localStorage.removeItem('cmrv.block');
       localStorage.removeItem('cmrv.live');
@@ -701,7 +748,7 @@ async function main() {
     await sleep(8000);
     ok(hits.stats - s6 === 1, 'et une seule');
 
-    console.log('23. Réglage « Messages en direct » décoché');
+    console.log('24. Réglage « Messages en direct » décoché');
     await page.goto(`${SITE}/inbox`);
     await hostReady();
     ok(await waitFor(async () => /en direct/.test(await ibar())), 'en direct au départ');
@@ -710,11 +757,11 @@ async function main() {
       sh.querySelector('#opt-live').dispatchEvent(new Event('change', { bubbles: true }));
     });
     await sleep(1500);
-    const s3 = hits.stats;
+    const s3 = { stats: hits.stats, head: hits.head };
     await sleep(9000);
-    ok(hits.stats === s3 && !/en direct/.test(await ibar()) && !/^\(\d+\) /.test(await page.title()), `plus de lecture, plus d’indicateur, titre « ${await page.title()} »`);
+    ok(hits.stats === s3.stats && hits.head === s3.head && !/en direct/.test(await ibar()) && !/^\(\d+\) /.test(await page.title()), `plus de lecture, plus d’indicateur, titre « ${await page.title()} »`);
 
-    console.log('24. Réglages');
+    console.log('25. Réglages');
     await page.goto(`${SITE}/member/777`);
     await hostReady();
     await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length >= 20));
@@ -727,7 +774,7 @@ async function main() {
     ok(await waitFor(() => page.evaluate(() => document.querySelectorAll('[data-cmrv-label]').length === 0)), 'affichages retirés quand les deux options sont décochées');
     ok(hits.shipping <= 40, `${hits.shipping} lectures de frais d’envoi sur tout le parcours`);
 
-    console.log('25. Clic sur l’icône hors Cardmarket et Vinted : page d’explication');
+    console.log('26. Clic sur l’icône hors Cardmarket et Vinted : page d’explication');
     // Sans passer par le service de fond, qui s'endort pendant un parcours aussi long.
     const welcome = await browser.newPage();
     await welcome.goto(`chrome-extension://${extId}/src/accueil.html`);
