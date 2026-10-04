@@ -290,6 +290,8 @@
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+    let timer = 0;
+    let dead = false; // l'extension a été rechargée : cette copie du script ne doit plus rien faire
     const S = {
       ctx: { kind: 'other' },
       href: '',
@@ -373,7 +375,8 @@
     }
     function noteSuccess() {
       const b = readBlock();
-      if (!b.n || Date.now() < b.until) return;
+      // Pas tout de suite : un refus juste après la reprise doit encore allonger la pause.
+      if (!b.n || Date.now() < b.until + MINUTE) return;
       try {
         root.localStorage.removeItem(BLOCK_KEY);
       } catch (e) {
@@ -493,7 +496,7 @@
       if (ship.busy) return;
       ship.busy = true;
       try {
-        while (ship.queue.length) {
+        while (ship.queue.length && !dead) {
           const now = Date.now();
           if (now < ship.pausedUntil || refused()) break;
           ship.stamps = ship.stamps.filter((t) => now - t < PAUSE);
@@ -562,6 +565,7 @@
     }
 
     function decorate() {
+      if (dead) return;
       const on = S.settings.titles || S.settings.shipping;
       // Page d'un lot : l'envoi n'est payé qu'une fois, il est compté dans l'estimation du panneau.
       const showShip = S.settings.shipping && S.ctx.kind !== 'bundle';
@@ -1157,8 +1161,19 @@
         if (inbox.armed === 'sel') return void deleteMany(ids);
         if (live.listDirty) {
           // Un message est arrivé pendant la sélection : la liste est relue maintenant, avant de confirmer.
-          inbox.note = 'liste actualisée : vérifie ta sélection';
-          return void step(() => showNewInList(0));
+          if (live.refreshing) return; // relecture déjà en cours : attendre son résultat
+          if (!S.settings.live || live.stopped || Date.now() < blockedUntil()) {
+            live.listDirty = false; // aucune requête : direct coupé, ou pause après un refus
+            live.heal = true; // à relire après la prochaine lecture réussie du compteur
+            inbox.note = 'liste non actualisée : vérifie ta sélection';
+            return void decorateInbox();
+          }
+          return void step(async () => {
+            const r = await showNewInList(0);
+            const done = r === 'ok' || r === 'fresh';
+            inbox.note = done ? 'liste actualisée : vérifie ta sélection' : 'liste non actualisée : vérifie ta sélection';
+            if (!done && r !== 'busy') live.listDirty = false; // un échec ne coûte qu'un clic
+          });
         }
         arm('sel');
       }
@@ -1166,7 +1181,7 @@
     }
 
     function decorateInbox() {
-      if (!/^\/inbox(\/|$)/.test(loc.pathname)) return;
+      if (dead || !/^\/inbox(\/|$)/.test(loc.pathname)) return;
       const rows = convRows();
       const anchor = doc.querySelector('[data-testid^="inbox-list-item-"][data-testid$="-container"]');
       if (!rows.length || !anchor || !anchor.parentElement) return;
@@ -1235,7 +1250,10 @@
         if (!b || b.getRootNode() !== doc) return;
         e.preventDefault();
         e.stopPropagation();
-        inboxAct(b.getAttribute('data-cmrv-act'), b.dataset.id);
+        // L'identifiant est pris sur la ligne au moment du clic, pas sur une copie qui pourrait dater.
+        const row = b.closest('[data-testid^="inbox-list-item-"]');
+        const id = row && /^inbox-list-item-\d+$/.test(row.getAttribute('data-testid')) ? convId(row) : b.dataset.id;
+        inboxAct(b.getAttribute('data-cmrv-act'), id);
       },
       true
     );
@@ -1280,6 +1298,7 @@
       pendingToast: false,
       prefix: '',
       stateAt: 0,
+      pausedAt: 0, // dernier instant passé en pause
       draft: 0, // longueur du message en cours de saisie
       sentAt: 0, // dernière fois que la zone de saisie s'est vidée : un message vient de partir
     };
@@ -1377,6 +1396,7 @@
     async function readUnread(maxAgeMs) {
       const res = await ask('poll', { maxAgeMs }, 12000);
       if (res.ok || !(res.reason === 'no-observer' || res.reason === 'no-data')) return res;
+      if (res.reason === 'no-data') spend();
       // La page est bien celle de Vinted mais sa pastille est introuvable : lecture directe, après un délai de grâce
       // (page en cours de construction) et jamais plus d'une fois par minute.
       const now = Date.now();
@@ -1396,8 +1416,11 @@
       try {
         const run = async () => {
           const s = shared();
-          if (!adopt && Date.now() - Math.max(live.t, s.t) < 2500) return undefined; // un autre onglet vient de lire
-          const res = await readUnread(adopt ? 0 : every);
+          const last = Math.max(live.t, s.t);
+          if (!adopt && Date.now() - last < 2500) return undefined; // un autre onglet vient de lire
+          // La valeur que Vinted a déjà en main dans cette page ne vaut que si elle est plus récente que la dernière
+          // lecture connue (sinon un onglet resté ouvert ferait revenir une ancienne valeur dans l'état partagé).
+          const res = await readUnread(adopt ? 0 : Math.max(1, Math.min(every, Date.now() - last)));
           const now = Date.now();
           live.jitter = 0.8 + Math.random() * 0.4;
           if (!res.ok) {
@@ -1415,16 +1438,20 @@
           }
           const at = res.cached ? Math.min(fin(res.at) || now, now) : now;
           if (!res.cached) spend();
+          const kind = adopt ? 'adopt' : liveDecide(live.unread, res.next);
+          // Hausse qu'un autre onglet a déjà lue (et peut-être annoncée) : cet onglet se met à jour, sans la redater.
+          const sh = shared();
+          const known = kind === 'up' && sh.unread !== null && sh.t > live.t && now - sh.t < 5 * MINUTE && res.next <= sh.unread;
           live.errors = 0;
           live.t = at;
           noteSuccess();
-          const kind = adopt ? 'adopt' : liveDecide(live.unread, res.next);
           const prev = live.unread;
           live.unread = res.next;
-          share(kind === 'up' ? { t: at, unread: res.next, changedAt: now } : { t: at, unread: res.next });
-          if (live.heal) {
+          share(kind === 'up' && !known ? { t: at, unread: res.next, changedAt: now } : { t: at, unread: res.next });
+          // Une relecture silencieuse avait échoué : on la refait maintenant que Vinted répond, sauf après un abandon.
+          if (live.heal && !adopt) {
             live.heal = false;
-            live.listDirty = live.convDirty = true;
+            if (live.tries < 3) live.listDirty = live.convDirty = true;
           }
           if (kind === 'up') {
             // Plusieurs hausses avant d'avoir pu relire : on garde la valeur la plus basse comme point de départ.
@@ -1436,6 +1463,9 @@
             // Lu entre-temps (ici ou sur un autre appareil) : l'avis n'a plus lieu d'être. Aucune requête.
             live.pendingToast = false;
             dropToast('msg');
+            // Une hausse attend encore d'être affichée : après cette baisse, le compteur ne dit plus où est le
+            // message ; la liste sera relue de toute façon.
+            if (live.preUp !== null) live.preUp = -1;
           }
           return res.next;
         };
@@ -1488,7 +1518,6 @@
       const res = await ask('refresh', what, 20000);
       spend(res.sent || 0);
       if (res.status === 403 || res.status === 429) noteRefusal();
-      if (res.conv === 'error' || res.list === 'error') live.heal = true;
       return res;
     }
 
@@ -1509,7 +1538,7 @@
     // Les requêtes de Vinted sont introuvables ou en erreur : trois essais, puis un simple avis « Actualiser ».
     function giveUp() {
       if (++live.tries < 3) return;
-      live.listDirty = live.convDirty = false;
+      live.listDirty = live.convDirty = live.heal = false;
       live.manual = true;
     }
 
@@ -1518,7 +1547,9 @@
     // qui se vide. Compter les écritures de Vinted dans ses données ne marche pas, il en fait après chaque lecture.)
     async function rereadIfSent(conv, since) {
       await sleep(1200);
-      if (live.sentAt >= since - 800 && openConv() === conv && !inbox.busy) await callRefresh({ conversation: conv });
+      if (!(live.sentAt >= since - 800 && openConv() === conv && !inbox.busy)) return;
+      const res = await callRefresh({ conversation: conv });
+      if (res.conv === 'error') live.heal = true;
     }
 
     // Hausse du compteur, conversation ouverte et utilisateur présent : on la relit (1 requête).
@@ -1543,7 +1574,7 @@
     // Hausse du compteur pour un message arrivé ailleurs : on relit la liste (au plus toutes les 30 s).
     async function showNewInList(maxPages) {
       const res = await callRefresh({ list: true, maxPages });
-      if (res.list === 'busy') return;
+      if (res.list === 'busy') return 'busy';
       if (res.list === 'ok' || res.list === 'fresh') {
         live.listDirty = live.manual = live.skipped = false;
         live.listAt = Date.now();
@@ -1555,6 +1586,7 @@
       } else if (res.list === 'none' && res.reason !== 'no-bridge' && !convRows().length) {
         live.listDirty = false; // fenêtre étroite : la liste n'est pas affichée, rien à relire
       } else giveUp();
+      return res.list;
     }
 
     // Après un changement de conversation ou une entrée dans la messagerie : Vinted réaffiche ce qu'il a gardé en
@@ -1562,6 +1594,8 @@
     async function afterNavigation(watched) {
       const changedAt = shared().changedAt;
       const res = await callRefresh({ list: true, maxPages: 8, listSince: changedAt || 1, conversation: watched ? openConv() : null, convSince: Math.max(changedAt, Date.now() - 2 * MINUTE) });
+      if (res.conv === 'error' || res.list === 'error') live.heal = true;
+      if (res.list === 'ok' || res.list === 'fresh') live.manual = live.skipped = false; // la liste est à jour
       if (res.list === 'ok') live.listAt = Date.now();
     }
 
@@ -1573,6 +1607,7 @@
       const t0 = Date.now();
       const since = t0 - 100000;
       const res = await callRefresh({ list: true, maxPages: 2, listSince: since, conversation: conv, convSince: since });
+      if (res.conv === 'error' || res.list === 'error') live.heal = true;
       if (res.list === 'ok') live.listAt = Date.now();
       if (res.conv !== 'ok') return;
       if (openConv() === conv && !inbox.busy) follow(before);
@@ -1693,7 +1728,11 @@
         });
       }
       if (!S.settings.live || live.stopped || inbox.busy) return;
-      if (now < blockedUntil() || now < live.localPauseUntil || root.navigator.onLine === false) return;
+      if (now < blockedUntil() || now < live.localPauseUntil) {
+        live.pausedAt = now;
+        return;
+      }
+      if (root.navigator.onLine === false) return;
       if (doc.querySelector('[data-testid="header--login-button"]')) return; // déconnecté
       if (doc.querySelector('iframe[src*="captcha-delivery"],script[src*="captcha-delivery"]')) return; // page de vérification
 
@@ -1702,7 +1741,9 @@
 
       // 1. Mettre à jour ce qui est affiché. Jamais pendant une sélection ou une confirmation de suppression (la
       //    liste ne doit pas bouger sous le curseur), ni après une lecture du compteur en échec.
-      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && !inbox.select && !inbox.armed && now - live.lastRefresh > 3000) {
+      //    Après une pause, une lecture du compteur (légère) doit d'abord avoir réussi, dans cet onglet ou un autre.
+      const tested = Math.max(live.t, s.t) >= live.pausedAt;
+      if (vis && inboxPage && !live.refreshing && !live.busy && !live.errors && tested && !inbox.select && !inbox.armed && now - live.lastRefresh > 3000 && !overBudget()) {
         if (live.convDirty && !openConv()) live.convDirty = false;
         if (live.convDirty && watched) return void step(showNewInConversation);
         if (live.listDirty && now - live.listAt >= 30000) return void step(() => showNewInList(8));
@@ -1759,7 +1800,7 @@
       S.href = loc.href;
       const wasInbox = live.wasInbox;
       live.wasInbox = onInbox();
-      live.manual = live.skipped = false;
+      if (!live.wasInbox) live.manual = live.skipped = false; // l'indicateur n'est affiché que dans la messagerie
       dropToast('conv');
       if (live.wasInbox) {
         // Conversation ou liste gardées en mémoire par Vinted : à relire si elles datent.
@@ -1788,11 +1829,15 @@
       if (S.open && ctx.sellerId) loadIndex();
     }
 
-    let timer = 0;
-    // L'extension a été rechargée ou mise à jour : cette copie du script n'a plus accès à rien et une nouvelle a pris
-    // le relais. Elle s'arrête et retire ce qu'elle avait ajouté à la page.
+    // L'extension a été rechargée ou mise à jour : cette copie du script n'a plus accès à rien. Elle s'arrête et retire
+    // ce qu'elle avait ajouté à la page ; la nouvelle version s'installe au prochain chargement de la page.
     function shutdown() {
+      dead = true;
       clearInterval(timer);
+      if (live.prefix && doc.title.startsWith(live.prefix)) doc.title = doc.title.slice(live.prefix.length);
+      live.prefix = '';
+      ship.queue = [];
+      ship.queued.clear();
       for (const el of doc.querySelectorAll('[data-cmrv-bar],[data-cmrv-ibar],[data-cmrv-label],[data-cmrv-total],[data-cmrv-toast],[data-cmrv-act]')) el.remove();
       host.remove();
       S.settings.live = false;

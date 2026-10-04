@@ -138,6 +138,8 @@
     if (req.maxAgeMs && fetched && count(cur.data) !== null && Date.now() - cur.dataUpdatedAt < req.maxAgeMs) {
       return { ok: true, next: count(cur.data), at: cur.dataUpdatedAt, cached: true };
     }
+    // Valeur déjà lue mais d'une forme inconnue (Vinted a changé son code) : inutile de la redemander.
+    if (fetched && count(cur.data) === null) return { ok: false, reason: 'no-observer' };
     const before = cur.dataUpdatedAt || 0;
     const r = await settle(o.refetch({ cancelRefetch: false }));
     if (failed(r) || !(r.dataUpdatedAt > before)) return { ok: false, reason: 'error', status: statusOf(r) };
@@ -174,9 +176,10 @@
         out.status = out.status || r.status || 0;
       }
     }
-    if (req.list) {
+    if (req.list && out.conv !== 'error') {
       for (const o of pick(found.list, LIST)) {
-        const r = req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, req.listSince);
+        const upToDate = !!req.listSince && o.getCurrentResult().dataUpdatedAt >= req.listSince;
+        const r = upToDate ? { state: 'fresh' } : req.maxPages && pagesOf(o).length > req.maxPages ? { state: 'skipped' } : await reread(o, 0);
         if (r.state === 'ok' || r.state === 'error') out.sent += pagesOf(o).length || 1; // une requête par page chargée
         out.list = worst(out.list, r.state);
         out.status = out.status || r.status || 0;

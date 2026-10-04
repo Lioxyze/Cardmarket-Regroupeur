@@ -609,9 +609,22 @@ async function main() {
     await page.goto(`${SITE}/member/777`);
     await hostReady();
     await sleep(2500);
+    // Un autre onglet Vinted, ouvert avant l'arrivée du message, puis laissé en arrière-plan.
+    const tabB = await browser.newPage();
+    await tabB.setRequestInterception(true);
+    tabB.on('request', handle);
+    await tabB.goto(`${SITE}/member/777`);
+    await waitFor(() => tabB.evaluate(() => !!document.getElementById('cmrv-host')));
+    await sleep(2500);
+    await page.bringToFront();
+    await sleep(1500);
     const s1 = hits.stats;
     receive(106, 'Dispo pour un échange ?');
-    await rewind();
+    // Hors messagerie, le compteur n'est lu qu'une fois par minute ; revenir sur l'onglet le fait lire tout de suite.
+    await page.evaluate(() => window.ageCache());
+    await tabB.bringToFront();
+    await sleep(900);
+    await page.bringToFront();
     ok(await waitFor(() => page.evaluate(() => !!document.querySelector('[data-cmrv-toast="msg"]')), 9000), 'avis affiché');
     const toastText = await page.evaluate(() => (document.querySelector('[data-cmrv-toast]') || {}).innerText || '');
     ok(/Nouveau message de farid/.test(toastText) && /échange/.test(toastText), toastText.replace(/\n/g, ' | '));
@@ -619,6 +632,14 @@ async function main() {
     await shot('avis');
     await Promise.all([page.waitForNavigation(), page.evaluate(() => document.querySelector('.cmrv-toast-main').click())]);
     ok(page.url() === `${SITE}/inbox/106`, `un clic sur l’avis ouvre la conversation : ${page.url().replace(SITE, '')}`);
+    await hostReady();
+    await sleep(2000); // la fausse messagerie charge sa liste : à ne pas confondre avec une lecture de l'extension
+    const i2 = hits.inbox;
+    await tabB.bringToFront();
+    await sleep(7000);
+    ok(/^\(\d+\) /.test(await tabB.title()) && !(await tabB.evaluate(() => !!document.querySelector('[data-cmrv-toast]'))) && hits.inbox === i2, `dans l’autre onglet : titre à jour (« ${await tabB.title()} »), pas de second avis ni de nouvelle lecture de la liste pour le même message`);
+    await tabB.close();
+    await page.bringToFront();
 
     console.log('20. Vinted refuse une lecture : tout se met en pause, partout');
     await hostReady();
