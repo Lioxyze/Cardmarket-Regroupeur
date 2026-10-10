@@ -195,8 +195,30 @@
     return String(key || '').split('/')[0] || 'Pokemon';
   }
 
+  /**
+   * Filtres portés par l'adresse d'une fiche, tels que Cardmarket les y met quand on filtre les offres
+   * (« …?language=2&isReverseHolo=Y ») : { special: 'only' | 'exclude' | null, languages: [ids] | null }.
+   */
+  function urlFilters(url) {
+    const out = { special: null, languages: null };
+    const p = parseUrl(url);
+    if (!p) return out;
+    const yn = (name) => {
+      const v = String(p.search.get(name) || p.search.get(`extra[${name}]`) || '').toUpperCase();
+      return v === 'Y' || v === 'N' ? v : '';
+    };
+    const version = yn('isReverseHolo') || yn('isFoil');
+    if (version) out.special = version === 'Y' ? 'only' : 'exclude';
+    const langs = (p.search.get('language') || '')
+      .split(',')
+      .map((x) => parseInt(x, 10))
+      .filter((id) => LANGUAGES.some((l) => l.id === id));
+    if (langs.length) out.languages = [...new Set(langs)].sort((a, b) => a - b);
+    return out;
+  }
+
   /** Paramètres serveur des pages produit (la vérification finale reste côté client). */
-  function productFilterParams(f) {
+  function productFilterParams(f, game) {
     const q = new URLSearchParams();
     if (f.languages && f.languages.length) q.set('language', [...f.languages].sort((a, b) => a - b).join(','));
     const cond = CONDITIONS.find((c) => c.code === f.minCondition);
@@ -220,6 +242,9 @@
     if (f.special === 'exclude') {
       flag('isFoil', 'exclude');
       flag('isReverseHolo', 'exclude');
+    } else if (f.special === 'only') {
+      // Un seul des deux filtres, sinon Cardmarket exigerait reverse ET foil : reverse pour Pokémon, foil ailleurs.
+      flag(!game || game === 'Pokemon' ? 'isReverseHolo' : 'isFoil', 'only');
     }
     flag('isFirstEd', f.firstEd);
     if (f.excludeSignedAltered) {
@@ -230,7 +255,7 @@
   }
 
   function productFetchUrl(key, filters) {
-    const q = productFilterParams(filters || {});
+    const q = productFilterParams(filters || {}, gameOfKey(key));
     const s = q.toString();
     return keyToUrl(key, 'en') + (s ? '?' + s : '');
   }
@@ -820,6 +845,7 @@
     productKey,
     keyToUrl,
     gameOfKey,
+    urlFilters,
     productFilterParams,
     productFetchUrl,
     searchUrl,

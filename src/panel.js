@@ -344,7 +344,7 @@
   // ---------- Liste ----------
 
   function addCard(card, { silent = false } = {}) {
-    const existing = state.cards.find((c) => c.key === card.key);
+    const existing = state.cards.find((c) => analyzer.sameEntry(c, card, state.settings));
     if (existing) {
       if (!silent) toast('Déjà dans la liste');
       return false;
@@ -373,14 +373,26 @@
     return true;
   }
 
+  // Version et langue d'une adresse Cardmarket (« …?language=2&isReverseHolo=Y ») : la carte est ajoutée telle
+  // qu'elle est affichée. La langue n'est retenue que si elle diffère du réglage par défaut.
+  function filtersFromUrl(url, key) {
+    const f = cm.urlFilters(url);
+    const def = state.settings.languages || [];
+    const sameLang = !f.languages || (f.languages.length === def.length && f.languages.every((id) => def.includes(id)));
+    return { special: cm.productKind(key) === 'single' ? f.special : null, languages: sameLang ? null : f.languages };
+  }
+  const pageUrl = () => CMR.testPageUrl || location.href;
+  const isReverse = (card) => analyzer.effectiveFilters(card, state.settings).special === 'only' && cm.productKind(card.key) === 'single';
+  // La carte de la page, dans la version affichée, est-elle déjà dans la liste ?
+  const currentInList = (key) => state.cards.some((c) => analyzer.sameEntry(c, Object.assign({ key }, filtersFromUrl(pageUrl(), key)), state.settings));
+
   function addCurrent() {
     const ctx = state.context;
     if (ctx.kind !== 'product') return;
     const info = cm.parseProductInfo(document);
     const sealed = cm.productKind(ctx.key) === 'sealed';
-    if (addCard({ key: ctx.key, name: info.name || nameFromKey(ctx.key), expansion: info.expansion, number: info.number, image: info.image })) {
-      toast(sealed ? 'Produit ajouté à ta liste' : 'Carte ajoutée à ta liste');
-    }
+    const card = Object.assign({ key: ctx.key, name: info.name || nameFromKey(ctx.key), expansion: info.expansion, number: info.number, image: info.image }, filtersFromUrl(pageUrl(), ctx.key));
+    if (addCard(card)) toast(sealed ? 'Produit ajouté à ta liste' : isReverse(card) ? 'Carte reverse ajoutée à ta liste' : 'Carte ajoutée à ta liste');
   }
 
   function importWants() {
@@ -398,7 +410,7 @@
     for (const line of lines) {
       if (/cardmarket\.com|^\/[a-z]{2}\//i.test(line)) {
         const key = cm.productKey(line.split(/\s+/)[0]);
-        if (key && addCard({ key, name: nameFromKey(key), autoName: true }, { silent: true })) added++;
+        if (key && addCard(Object.assign({ key, name: nameFromKey(key), autoName: true }, filtersFromUrl(line.split(/\s+/)[0], key)), { silent: true })) added++;
         else if (!key) invalid++;
         continue;
       }
@@ -496,7 +508,7 @@
     // Un lien collé dans la recherche : ajout direct.
     const key = /cardmarket\.com/i.test(q) ? cm.productKey(q.split(/\s+/)[0]) : null;
     if (key) {
-      if (addCard({ key, name: nameFromKey(key), autoName: true })) toast('Carte ajoutée à ta liste');
+      if (addCard(Object.assign({ key, name: nameFromKey(key), autoName: true }, filtersFromUrl(q.split(/\s+/)[0], key)))) toast('Carte ajoutée à ta liste');
       sr.q = '';
       render();
       return;
@@ -717,7 +729,7 @@
     let added = 0;
     for (const { p, exp } of products) {
       const n = qty.get(p.key);
-      const existing = state.cards.find((c) => c.key === p.key);
+      const existing = state.cards.find((c) => analyzer.sameEntry(c, { key: p.key }, state.settings));
       if (existing) {
         existing.qty = Math.min(99, (existing.qty || 1) + n);
         continue;
@@ -1146,10 +1158,11 @@
     const ctx = state.context;
     let add = '';
     if (ctx.kind === 'product') {
-      const inList = state.cards.some((c) => c.key === ctx.key);
+      const inList = currentInList(ctx.key);
+      const rev = filtersFromUrl(pageUrl(), ctx.key).special === 'only' ? ' (reverse)' : '';
       add = inList
-        ? html`<button class="add done" data-act="open-list">✓ Dans ta liste</button>`
-        : html`<button class="add" data-act="add-current">+ Ajouter ${cm.productKind(ctx.key) === 'sealed' ? 'ce produit' : 'cette carte'}</button>`;
+        ? html`<button class="add done" data-act="open-list">✓ Dans ta liste${rev}</button>`
+        : html`<button class="add" data-act="add-current">+ Ajouter ${cm.productKind(ctx.key) === 'sealed' ? 'ce produit' : 'cette carte'}${rev}</button>`;
     }
     if (ctx.kind === 'seller') {
       const cov = sellerCoverage(ctx.seller);
@@ -1248,7 +1261,7 @@
       </div>`;
     }
     if (ctx.kind === 'product') {
-      const inList = state.cards.some((c) => c.key === ctx.key);
+      const inList = currentInList(ctx.key);
       const info = ctx.info || {};
       return html`<div class="banner">
         <div class="grow"><p class="title truncate">${info.name || nameFromKey(ctx.key)}</p><p class="small muted truncate">${[
@@ -1323,6 +1336,7 @@
           <div class="card-top">
             <a class="name truncate" href="${productHref(card.key)}" target="_blank" rel="noopener" title="${card.name}">${card.name}</a>
             ${!single ? html`<span class="tag">Scellé</span>` : f.graded === 'only' ? html`<span class="tag accent">${gradedText(f)}</span>` : ''}
+            ${single && f.special === 'only' ? html`<span class="tag accent">Reverse</span>` : ''}
             ${cardStatus(card)}
           </div>
           ${meta ? html`<div class="card-meta truncate">${meta}</div>` : ''}
@@ -2229,7 +2243,7 @@
       else if (!i.sellers) status = html`<span class="tag warn">introuvable</span>`;
       else status = html`<span class="tag ok">${plural(i.sellers, 'vendeur', 'vendeurs')}</span>`;
       return html`<tr>
-        <td><a href="${productHref(i.key)}" target="_blank" rel="noopener">${i.name}</a>${i.qty > 1 ? html` <b>×${i.qty}</b>` : ''}<div class="faint small">${i.expansion}</div></td>
+        <td><a href="${productHref(i.key)}" target="_blank" rel="noopener">${i.name}</a>${i.reverse ? html` <span class="tag accent">Reverse</span>` : ''}${i.qty > 1 ? html` <b>×${i.qty}</b>` : ''}<div class="faint small">${i.expansion}</div></td>
         <td>${status}</td>
         <td class="num">${i.offersAccepted}/${i.offersTotal}${i.complete ? '' : '+'}</td>
         <td class="num">${eur(i.cheapest)}</td>
@@ -2469,7 +2483,15 @@
         card.minGrade = null;
       }
     }
-    else card[field] = v || null;
+    else {
+      const before = card[field];
+      card[field] = v || null;
+      // Passer une ligne en reverse (ou l'inverse) ne doit pas créer un doublon de l'autre ligne de la même carte.
+      if (field === 'special' && state.cards.some((c) => c !== card && analyzer.sameEntry(c, card, state.settings))) {
+        card[field] = before;
+        toast('Cette version de la carte est déjà dans la liste');
+      }
+    }
     saveList();
     recompute();
     render();
@@ -2665,7 +2687,7 @@
         break;
       case 'undo':
         if (state.undo) {
-          for (const { card, idx } of state.undo) if (!state.cards.some((c) => c.key === card.key)) state.cards.splice(Math.min(idx, state.cards.length), 0, card);
+          for (const { card, idx } of state.undo) if (!state.cards.some((c) => analyzer.sameEntry(c, card, state.settings))) state.cards.splice(Math.min(idx, state.cards.length), 0, card);
           state.undo = null;
           saveList();
           recompute();

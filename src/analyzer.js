@@ -49,6 +49,15 @@
     return f;
   }
 
+  /**
+   * Deux lignes de la liste désignent-elles le même achat ? Même fiche et même version : la reverse et la normale
+   * d'une carte partagent la même fiche Cardmarket, mais ce sont deux achats différents.
+   */
+  function sameEntry(a, b, s) {
+    const reverse = (c) => effectiveFilters(c, s || {}).special === 'only';
+    return a.key === b.key && reverse(a) === reverse(b);
+  }
+
   function sellerCountryCodes(s) {
     if (s.countryMode === 'mine') return [s.shipping.buyerCountry];
     if (s.countryMode === 'list') return s.countries || [];
@@ -135,6 +144,7 @@
         key: card.key,
         name: p.name || card.name || card.key,
         kind: f.kind,
+        reverse: f.kind === 'single' && f.special === 'only',
         expansion: p.expansion || card.expansion || '',
         number: p.number || card.number || '',
         trend: p.trend ?? null,
@@ -692,6 +702,7 @@
 
   return {
     effectiveFilters,
+    sameEntry,
     serverFilters,
     premiumLimit,
     learnedShipping,

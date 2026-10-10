@@ -126,3 +126,18 @@ test('nom simplifié pour chercher dans un stock vendeur', () => {
   assert.equal(cm.searchableName('Snorlax  (LC 64)'), 'Snorlax');
   assert.equal(cm.searchableName('Pikachu ex'), 'Pikachu ex');
 });
+
+test('adresse d’une fiche : version reverse et langue', () => {
+  const u = 'https://www.cardmarket.com/fr/Pokemon/Products/Singles/Pitch-Black/Miraidon-PBL028';
+  assert.deepEqual(cm.urlFilters(u + '?language=2&isReverseHolo=Y'), { special: 'only', languages: [2] });
+  assert.deepEqual(cm.urlFilters(u + '?language=2&isReverseHolo=N'), { special: 'exclude', languages: [2] });
+  assert.deepEqual(cm.urlFilters(u + '?language=7,2&extra[isReverseHolo]=y'), { special: 'only', languages: [2, 7] });
+  assert.deepEqual(cm.urlFilters(u), { special: null, languages: null });
+  assert.deepEqual(cm.urlFilters(u + '?language=99&isReverseHolo=peut-etre'), { special: null, languages: null });
+  // « reverse uniquement » est demandé au serveur : sinon les 50 offres les moins chères sont presque toutes normales
+  const key = cm.productKey(u);
+  assert.match(cm.productFetchUrl(key, { special: 'only' }), /\?isReverseHolo=Y&/);
+  assert.doesNotMatch(cm.productFetchUrl(key, { special: 'only' }), /isFoil/);
+  assert.match(cm.productFetchUrl('Magic/Products/Singles/X/Y', { special: 'only' }), /\?isFoil=Y&/);
+  assert.match(cm.productFetchUrl(key, { special: 'exclude' }), /isReverseHolo=N/);
+});
