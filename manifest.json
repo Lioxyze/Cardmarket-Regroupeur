@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Regroupeur — Cardmarket & Vinted",
   "short_name": "Regroupeur",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "description": "Cardmarket : moins de vendeurs, cartes manquantes (Pokécardex). Vinted : recherche dressing, lots, prix avec envoi, messages.",
   "icons": {
     "16": "icons/icon-16.png",
