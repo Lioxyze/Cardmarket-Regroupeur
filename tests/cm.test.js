@@ -92,6 +92,13 @@ test('URL : clé produit, filtres serveur', () => {
   );
   assert.equal(cm.productKey('https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=x'), null);
   assert.equal(cm.productKey('https://example.com/fr/Pokemon/Products/Singles/A/B'), null);
+  // page d'une extension : pas une carte
+  const set = 'https://www.cardmarket.com/fr/Pokemon/Products/Singles/30th-Celebration';
+  assert.equal(cm.productKey(set), null);
+  assert.deepEqual(cm.expansionOf(set + '?mode=list'), { game: 'Pokemon', slug: '30th-Celebration' });
+  assert.deepEqual(cm.expansionOf('https://www.cardmarket.com/fr/Pokemon/Products/Singles?idExpansion=5821'), { game: 'Pokemon', id: 5821 });
+  assert.equal(cm.expansionOf(set + '/Pikachu-X001'), null);
+  assert.equal(cm.expansionOf('https://www.cardmarket.com/fr/Pokemon/Products/Singles'), null);
   const url = cm.productFetchUrl('Pokemon/Products/Singles/Scarlet-Violet-151/Pikachu-MEW025', {
     languages: [7, 2],
     minCondition: 'NM',

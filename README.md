@@ -521,3 +521,20 @@ npm run store-assets  # captures 1280×800 et vignette 440×280 pour la fiche du
 
 Si Cardmarket change sa mise en page, les parseurs sont regroupés dans `src/cm.js`
 et testés sur les pages de `tests/fixtures/` : enregistrer une page à jour et relancer `npm test`.
+
+## Pokécardex : les cartes qui me manquent
+
+Le Regroupeur peut lire ta collection [Pokécardex](https://www.pokecardex.com/collection) (il faut y être connecté
+dans le même navigateur) et la garder dans l'extension :
+
+- sur Cardmarket, **Mes séries** affiche tes séries commencées, avec leur logo et ton avancement ;
+- une série ouverte montre ses cartes en images : bordure verte si tu l'as, rouge si elle manque
+  (standard et reverse comptées à part) ;
+- **Ajouter les cartes manquantes** les met dans ta liste, puis « Trouver les vendeurs » comme d'habitude ;
+- **Actualiser ma collection Pokécardex** ouvre Pokécardex, relit les séries qui ont changé et referme l'onglet.
+
+Seules les cartes Standard et Reverse, en français (japonais en option), sont prises en compte. La lecture se fait
+sur la page affichée dans ton navigateur : rien n'est envoyé ailleurs, tout reste dans l'extension.
+
+Sur la page d'une extension Cardmarket (`…/Products/Singles/<extension>`), « + Ajouter toute la série » ajoute
+toutes ses cartes d'un coup.

@@ -184,7 +184,17 @@
   function productKey(url) {
     const p = parseUrl(url);
     if (!p || p.rest[0] !== 'Products' || p.rest.length < 3 || p.rest[1] === 'Search') return null;
+    if (p.rest[1] === 'Singles' && p.rest.length < 4) return null; // page d'une extension, pas une carte
     return [p.game, ...p.rest].join('/');
+  }
+
+  /** Page de toutes les cartes d'une extension (« …/Products/Singles/30th-Celebration ») : { game, slug } ou { game, id }. */
+  function expansionOf(url) {
+    const p = parseUrl(url);
+    if (!p || p.rest[0] !== 'Products' || p.rest[1] !== 'Singles' || p.rest.length > 3) return null;
+    if (p.rest[2]) return { game: p.game, slug: p.rest[2] };
+    const id = parseInt(p.search.get('idExpansion'), 10);
+    return id > 0 ? { game: p.game, id } : null;
   }
 
   function keyToUrl(key, locale = 'en') {
@@ -295,6 +305,32 @@
     if (exp.slug) path += '/' + encodeURIComponent(exp.slug);
     else q.set('idExpansion', String(exp.id));
     return `${path}?${q}`;
+  }
+
+  /**
+   * Page « Expansions » : les séries rangées par bloc, dans l'ordre de la page.
+   * → [{ name: 'Écarlate et Violet', sets: [{ slug, name }] }] ; un seul bloc si la page n'a pas de titres.
+   */
+  function parseExpansionsPage(doc) {
+    const blocks = [];
+    const seen = new Set();
+    let cur = null;
+    const scope = doc.querySelector('main') || doc.body || doc;
+    for (const el of scope.querySelectorAll('h2, h3, h4, a[href*="/Expansions/"]')) {
+      if (el.tagName !== 'A') {
+        const name = text(el);
+        if (name && name.length <= 60) blocks.push((cur = { name, sets: [] }));
+        continue;
+      }
+      const p = parseUrl(el.getAttribute('href'));
+      const slug = p && p.rest[0] === 'Expansions' && p.rest.length === 2 ? p.rest[1] : '';
+      if (!slug || seen.has(slug)) continue;
+      seen.add(slug);
+      if (!cur) blocks.push((cur = { name: 'Séries', sets: [] }));
+      const label = text(el) || tip(el);
+      cur.sets.push({ slug, name: label && label.length <= 60 ? label : slug.replace(/-/g, ' ') });
+    }
+    return blocks.filter((b) => b.sets.length);
   }
 
   /** Extensions proposées dans le filtre des pages de liste / recherche : [{ id, name }]. */
@@ -851,6 +887,8 @@
     searchUrl,
     SEARCH_KINDS,
     expansionListUrl,
+    expansionOf,
+    parseExpansionsPage,
     parseExpansionOptions,
     parsePagination,
     productKind,

@@ -128,6 +128,12 @@
     addGame: 'Pokemon',
     search: { q: '', status: 'idle', results: [], error: null, last: '' },
     searchKind: 'singles',
+    setView: null, // série affichée : { exp, rows: [{ key, name, number, image, owned }], code, read, pcxTotal }
+    setAuto: null, // série de la page déjà affichée d'office
+    browse: { open: false, sets: null, q: '', jp: false, loading: false }, // séries lues sur Pokécardex
+    setSel: new Set(), // clés des cartes manquantes cochées
+    setLoad: null, // ajout d'une série entière en cours : { note }
+    setAdded: null, // cartes de la dernière série ajoutée (pour « Annuler »)
     bulk: null, // liste numérotée en cours (« 065 — Tokotoro ») : détection de l'extension, aperçu
     expansions: {}, // « Pokemon|fr » → [{ id, name }]
     cart: {},
@@ -152,6 +158,11 @@
   let mountEl;
   let toastTimer;
 
+  let VERSION = '';
+  try {
+    VERSION = 'v' + chrome.runtime.getManifest().version;
+  } catch (e) {}
+
   // ---------- Contexte de la page ----------
 
   function detectContext() {
@@ -164,6 +175,11 @@
     }
     if (p.rest[0] === 'Users' && p.rest[1]) {
       return Object.assign(base, { kind: 'seller', seller: p.rest[1] });
+    }
+    const exp = cm.expansionOf(here);
+    if (exp) {
+      const name = (exp.slug || '').replace(/-/g, ' ') || 'Cette extension';
+      return Object.assign(base, { kind: 'set', exp: Object.assign({ name }, exp) });
     }
     if (p.rest[0] === 'Wants' && p.rest[1]) {
       return Object.assign(base, { kind: 'wants', items: cm.parseWantsPage(document) });
@@ -393,6 +409,43 @@
     const sealed = cm.productKind(ctx.key) === 'sealed';
     const card = Object.assign({ key: ctx.key, name: info.name || nameFromKey(ctx.key), expansion: info.expansion, number: info.number, image: info.image }, filtersFromUrl(pageUrl(), ctx.key));
     if (addCard(card)) toast(sealed ? 'Produit ajouté à ta liste' : isReverse(card) ? 'Carte reverse ajoutée à ta liste' : 'Carte ajoutée à ta liste');
+  }
+
+  // Page d'une extension : toutes ses cartes d'un coup (100 par page lue, triées par numéro).
+  const SET_PAGES = 8;
+  async function addSet() {
+    const exp = state.context.exp;
+    if (!exp || state.setLoad) return;
+    const load = (state.setLoad = { note: 'Lecture de la série…' });
+    render();
+    try {
+      const fetcher = new Fetcher({ delayMs: Math.min(state.settings.delayMs, 2000) });
+      let listing = [];
+      let pages = 1;
+      for (let page = 1; page <= pages && page <= SET_PAGES; page++) {
+        const { doc } = await fetcher.getDoc(cm.expansionListUrl(exp.game, exp, locale(), page));
+        listing = listing.concat(cm.parseSearchPage(doc));
+        pages = cm.parsePagination(doc).pages;
+        load.note = `Lecture de la série… ${page}/${Math.min(pages, SET_PAGES)}`;
+        render();
+      }
+      const before = state.cards.length;
+      for (const c of listing) {
+        if (cm.productKind(c.key) !== 'single') continue;
+        addCard({ key: c.key, name: c.name || nameFromKey(c.key), expansion: c.expansion || exp.name, number: c.number || '', image: c.image || '' }, { silent: true });
+      }
+      const n = state.cards.length - before;
+      state.setLoad = null;
+      if (!listing.length) toast('Aucune carte lue sur cette série');
+      else if (!n) toast('Toute la série est déjà dans ta liste');
+      else {
+        state.setAdded = state.cards.slice(before).map((c) => c.id);
+        toast(`${plural(n, 'carte ajoutée', 'cartes ajoutées')}${pages > SET_PAGES ? ' (série trop longue : début seulement)' : ''}`, { label: 'Annuler', act: 'undo-set' });
+      }
+    } catch (e) {
+      state.setLoad = null;
+      toast(e.message || String(e));
+    }
   }
 
   function importWants() {
@@ -722,19 +775,21 @@
     for (const g of bulk.groups) {
       if (g.status !== 'preview') continue;
       for (const m of g.matched) {
-        if (!qty.has(m.product.key)) products.push({ p: m.product, exp: g.expansion });
-        qty.set(m.product.key, (qty.get(m.product.key) || 0) + (m.want.qty || 1));
+        const special = m.want.special || null; // reverse demandée : une entrée à part de la standard
+        const id = m.product.key + '|' + (special || '');
+        if (!qty.has(id)) products.push({ p: m.product, exp: g.expansion, special, id, image: m.want.image || '' });
+        qty.set(id, (qty.get(id) || 0) + (m.want.qty || 1));
       }
     }
     let added = 0;
-    for (const { p, exp } of products) {
-      const n = qty.get(p.key);
-      const existing = state.cards.find((c) => analyzer.sameEntry(c, { key: p.key }, state.settings));
+    for (const { p, exp, special, id, image } of products) {
+      const n = qty.get(id);
+      const existing = state.cards.find((c) => analyzer.sameEntry(c, special ? { key: p.key, special } : { key: p.key }, state.settings));
       if (existing) {
         existing.qty = Math.min(99, (existing.qty || 1) + n);
         continue;
       }
-      if (addCard({ key: p.key, name: p.name, expansion: exp ? exp.name : '', number: p.number, image: p.image || '', qty: n }, { silent: true })) added++;
+      if (addCard(Object.assign({ key: p.key, name: p.name, expansion: exp ? exp.name : '', number: p.number, image: image || p.image || '', qty: n }, special ? { special } : {}), { silent: true })) added++;
     }
     saveList();
     const left = bulk.groups.reduce((n, g) => n + (g.status === 'preview' ? g.unmatched.length : g.wants.length), 0);
@@ -1164,6 +1219,10 @@
         ? html`<button class="add done" data-act="open-list">✓ Dans ta liste${rev}</button>`
         : html`<button class="add" data-act="add-current">+ Ajouter ${cm.productKind(ctx.key) === 'sealed' ? 'ce produit' : 'cette carte'}${rev}</button>`;
     }
+    if (ctx.kind === 'other') add = html`<button class="add" data-act="browse-open">Mes séries</button>`;
+    if (ctx.kind === 'set') {
+      add = html`<button class="add" data-act="add-set" ${attr(!!state.setLoad, 'disabled')}>${state.setLoad ? state.setLoad.note : '+ Ajouter toute la série'}</button>`;
+    }
     if (ctx.kind === 'seller') {
       const cov = sellerCoverage(ctx.seller);
       if (cov && cov.covered) {
@@ -1182,7 +1241,7 @@
     const upd = state.update && state.update.readyToActivate
       ? html`<button class="add" data-act="apply-update" title="Installer la nouvelle version du Regroupeur">⟳ Mise à jour prête</button>`
       : '';
-    return html`<div class="launcher">${upd}${add}<button data-act="open" aria-label="Ouvrir le Regroupeur">${raw(ICON.logo)} Regroupeur ${badge}</button></div>`;
+    return html`<div class="launcher">${upd}${add}<button data-act="open" aria-label="Ouvrir le Regroupeur">${raw(ICON.logo)} Regroupeur <small style="opacity:.7;font-weight:400">${VERSION}</small> ${badge}</button></div>`;
   }
 
   // ---------- Rendu : panneau ----------
@@ -1198,7 +1257,7 @@
     const body = state.tab === 'settings' ? renderSettings() : state.tab === 'results' ? renderResults() : renderList();
     return html`<section class="panel ${state.wide ? 'wide' : ''}" role="dialog" aria-label="Regroupeur Cardmarket">
       <header class="head">
-        <div class="brand">${raw(ICON.logo)}<div><strong>Regroupeur</strong><span>Moins de vendeurs, moins de frais de port</span></div></div>
+        <div class="brand">${raw(ICON.logo)}<div><strong>Regroupeur <small style="opacity:.7;font-weight:400">${VERSION}</small></strong><span>Moins de vendeurs, moins de frais de port</span></div></div>
         <button class="btn small ${state.tab === 'settings' ? 'active' : ''}" data-act="settings">Réglages</button>
         <button class="icon-btn" data-act="wide" title="${state.wide ? 'Réduire' : 'Agrandir'}" aria-label="${state.wide ? 'Réduire le panneau' : 'Agrandir le panneau'}">${raw(
       state.wide ? ICON.collapse : ICON.expand
@@ -1271,6 +1330,12 @@
         .filter(Boolean)
         .join(' · ')}</p></div>
         ${inList ? html`<span class="tag ok">Dans la liste</span>` : html`<button class="btn primary small" data-act="add-current">Ajouter</button>`}
+      </div>`;
+    }
+    if (ctx.kind === 'set') {
+      return html`<div class="banner">
+        <div class="grow"><p class="title truncate">${ctx.exp.name}</p><p class="small muted">${state.setLoad ? state.setLoad.note : 'Toutes les cartes de cette série, une fois chacune'}</p></div>
+        <button class="btn primary small" data-act="add-set" ${attr(!!state.setLoad, 'disabled')}>Ajouter la série</button>
       </div>`;
     }
     if (ctx.kind === 'wants') {
@@ -1588,9 +1653,252 @@
     </div>`;
   }
 
+  // ---------- Séries : cartes possédées (Pokécardex) en vert, manquantes en rouge ----------
+
+  const cardNumber = (n) => String(parseInt(n, 10) || '');
+  const expId = (exp) => String(exp.slug || exp.id);
+
+  /** Cartes relevées par le lecteur Pokécardex : [{ code, n, name, owned }]. */
+  function readPokecardex() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get('cmr.pokecardex', (d) => {
+          const all = (d && d['cmr.pokecardex']) || {};
+          resolve(Object.values(all).map((c) => ({ code: String(c.code || '').toUpperCase(), n: cardNumber(c.number), name: cm.norm(c.name), owned: !!c.owned })));
+        });
+      } catch (e) {
+        resolve([]);
+      }
+    });
+  }
+
+  /**
+   * Quelles cartes de la série sont possédées ? Le code de série est lu dans l'adresse Cardmarket
+   * (« …/Miraidon-PBL028 » → PBL) : s'il est connu de Pokécardex, on compare code + numéro (sûr).
+   * Sinon on se rabat sur numéro + nom. Standard ou reverse : une seule possédée suffit.
+   */
+  function markOwned(listing, pcx) {
+    const codes = new Map();
+    for (const c of listing) {
+      const m = String(c.key).match(/-([A-Z][A-Z0-9]{1,5}?)(\d{1,3})$/);
+      if (m) codes.set(m[1], (codes.get(m[1]) || 0) + 1);
+    }
+    let code = [...codes.entries()].sort((x, y) => y[1] - x[1]).map((e) => e[0]).find((k) => pcx.some((p) => p.code === k)) || null;
+    if (!code) {
+      // Codes différents d'un site à l'autre : la série Pokécardex qui a le plus de cartes au même numéro et au même nom.
+      const wanted = new Set(listing.map((c) => cardNumber(c.number) + '|' + cm.norm(c.name)));
+      const hits = new Map();
+      for (const p of pcx) if (wanted.has(p.n + '|' + p.name)) hits.set(p.code, (hits.get(p.code) || new Set()).add(p.n));
+      const best = [...hits.entries()].sort((x, y) => y[1].size - x[1].size)[0];
+      if (best && best[1].size >= Math.min(5, Math.ceil(listing.length / 3))) code = best[0];
+    }
+    const read = code ? pcx.filter((p) => p.code === code) : pcx;
+    const owned = read.filter((p) => p.owned);
+    const rows = listing.map((c) => {
+      const n = cardNumber(c.number);
+      const name = cm.norm(c.name);
+      const has = code
+        ? owned.some((o) => o.n === n)
+        : owned.some((o) => o.n === n && o.name && name && (o.name === name || o.name.includes(name) || name.includes(o.name)));
+      return { key: c.key, name: c.name || nameFromKey(c.key), number: c.number || '', image: c.image || '', owned: has };
+    });
+    return { rows, code, read: new Set(read.map((p) => p.n)).size };
+  }
+
+  async function loadSetView(exp) {
+    if (!exp || state.setLoad) return;
+    state.setLoad = { note: `Lecture de « ${exp.name} »…` };
+    state.setView = null;
+    render();
+    try {
+      const fetcher = new Fetcher({ delayMs: Math.min(state.settings.delayMs, 2000) });
+      const pcx = await readPokecardex();
+      let listing = [];
+      let pages = 1;
+      for (let page = 1; page <= pages && page <= SET_PAGES; page++) {
+        const { doc } = await fetcher.getDoc(cm.expansionListUrl(exp.game, exp, locale(), page));
+        rememberExpansions(exp.game, cm.parseExpansionOptions(doc));
+        listing = listing.concat(cm.parseSearchPage(doc));
+        pages = cm.parsePagination(doc).pages;
+      }
+      const m = markOwned(listing.filter((c) => cm.productKind(c.key) === 'single'), pcx);
+      state.setView = Object.assign(m, { exp, pcxTotal: pcx.length, complete: pages <= SET_PAGES });
+      state.setSel = new Set(m.rows.filter((r) => !r.owned).map((r) => r.key));
+      state.scrollTo = '.setview';
+    } catch (e) {
+      toast(e.message || String(e));
+    }
+    state.setLoad = null;
+    render();
+  }
+
+  function renderSetView() {
+    if (state.setLoad && !state.setView) return html`<div class="section setview"><p class="help">${state.setLoad.note}</p></div>`;
+    const v = state.setView;
+    if (!v) return '';
+    if (v.pcx) return renderPcxSet(v);
+    const missing = v.rows.filter((r) => !r.owned);
+    const sel = missing.filter((r) => state.setSel.has(r.key)).length;
+    let note;
+    if (!v.pcxTotal) note = 'Pokécardex : rien de lu pour l’instant. Ouvre ta collection sur pokecardex.com, clique sur la série puis sur « Lire toute la série » (pastille en bas à gauche).';
+    else if (!v.code) note = 'Série non retrouvée dans ce qui a été lu sur Pokécardex : comparaison par numéro et nom, moins sûre. Ouvre cette série sur Pokécardex et clique « Lire toute la série ».';
+    else if (v.read < v.rows.length) note = `Pokécardex (${v.code}) : ${v.read} cartes lues sur ${v.rows.length}. Sur Pokécardex, ouvre cette série et clique « Lire toute la série », puis « Relire » ici.`;
+    else note = `Pokécardex (${v.code}) : série lue en entier.`;
+    return html`<div class="section setview">
+      <div class="section-head"><h3>${v.exp.name} : ${v.rows.length - missing.length} / ${v.rows.length} possédées</h3>
+        <span><button class="btn link small" data-act="set-reload">Relire</button> · <button class="btn link small" data-act="set-close">Fermer</button></span></div>
+      <p class="help">${note}</p>
+      ${missing.length ? html`<p class="help"><button class="btn link small" data-act="set-all">${sel === missing.length ? 'Tout décocher' : 'Cocher toutes les manquantes'}</button></p>` : ''}
+      <ul class="cards box" style="max-height:340px;overflow:auto">${v.rows.map((r) => {
+        const on = !r.owned && state.setSel.has(r.key);
+        return html`<li class="card-row" style="padding:2px 8px"><button class="btn link small" data-act="set-toggle" data-key="${r.key}" ${attr(r.owned, 'disabled')} style="text-align:left;opacity:${r.owned ? 0.75 : 1}">
+          <span style="color:${r.owned ? '#1a8a3a' : '#c62828'}">●</span> ${r.owned ? '' : on ? '☑' : '☐'} ${r.number ? r.number + ' · ' : ''}${r.name}</button></li>`;
+      })}</ul>
+      <button class="btn primary" data-act="set-add-selected" ${attr(!sel, 'disabled')}>${
+        missing.length ? `Ajouter les ${plural(sel, 'carte manquante', 'cartes manquantes')} à ma liste` : 'Série complète'
+      }</button>
+    </div>`;
+  }
+
+  function addSetSelected() {
+    const v = state.setView;
+    if (!v) return;
+    if (v.pcx) {
+      const wants = v.rows.filter((r) => !r.owned && state.setSel.has(r.key)).map((r) => ({ name: r.name, number: r.number, setCode: v.code, expansion: '', languages: null, minCondition: null, qty: 1, special: r.rev ? 'only' : null, image: r.image ? r.image + '?class=md' : '' }));
+      if (wants.length) resolveNumberedList(wants);
+      return;
+    }
+    const before = state.cards.length;
+    for (const r of v.rows) {
+      if (r.owned || !state.setSel.has(r.key)) continue;
+      addCard({ key: r.key, name: r.name, expansion: v.exp.name, number: r.number, image: r.image }, { silent: true });
+    }
+    const n = state.cards.length - before;
+    if (!n) return toast('Déjà dans ta liste');
+    state.setAdded = state.cards.slice(before).map((c) => c.id);
+    toast(plural(n, 'carte ajoutée', 'cartes ajoutées'), { label: 'Annuler', act: 'undo-set' });
+  }
+
+  // ---------- Mes séries : tout vient de ce que le lecteur Pokécardex a gardé (aucune page à rouvrir) ----------
+
+  const PCX_CDN = 'https://pokecardex.b-cdn.net/assets/images/symboles/';
+  const PCX_SCANS = 'https://pokecardex-scans.b-cdn.net/sets/';
+
+  function ago(t) {
+    if (!t) return 'date inconnue';
+    const min = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (min < 1) return 'à l’instant';
+    if (min < 60) return `il y a ${min} min`;
+    if (min < 1440) return `il y a ${Math.round(min / 60)} h`;
+    return `il y a ${Math.round(min / 1440)} j`;
+  }
+
+  function loadBrowse() {
+    const br = state.browse;
+    br.loading = true;
+    try {
+      chrome.storage.local.get(['cmr.pokecardex', 'cmr.pcxSeries', 'cmr.pcxJp', 'cmr.pcxSeen', 'cmr.pcxScan'], (d) => {
+        const seen = (d && d['cmr.pcxSeen']) || {};
+        const meta = (d && d['cmr.pcxSeries']) || {};
+        const sets = new Map();
+        for (const c of Object.values((d && d['cmr.pokecardex']) || {})) {
+          const id = c.code + '|' + c.lang;
+          if (!sets.has(id)) sets.set(id, { id, code: c.code, lang: c.lang, cards: new Map() });
+          const cards = sets.get(id).cards;
+          const rev = c.version === 'R';
+          const k = cardNumber(c.number) + (rev ? 'R' : '');
+          cards.set(k, { key: k, number: c.number, name: c.name, rev, image: c.i ? PCX_SCANS + c.i : '', owned: !!c.owned });
+        }
+        br.sets = [...sets.values()].map((x) => {
+          const m = meta[x.code] || {};
+          const rows = [...x.cards.values()].sort((p, q) => parseInt(p.key, 10) - parseInt(q.key, 10) || (p.rev ? 1 : 0) - (q.rev ? 1 : 0));
+          return { seen: seen[x.id] || 0, id: x.id, code: x.code, lang: x.lang, name: m.name || x.code, block: m.block || '', order: m.order == null ? 9999 : m.order, rows, owned: rows.filter((r) => r.owned).length };
+        }).sort((p, q) => p.order - q.order || p.name.localeCompare(q.name));
+        br.jp = !!(d && d['cmr.pcxJp']);
+        br.scan = (d && d['cmr.pcxScan']) || null;
+        br.loading = false;
+        render();
+      });
+    } catch (e) {
+      Object.assign(br, { loading: false, sets: [] });
+    }
+  }
+
+  function openPcxSet(id) {
+    const x = (state.browse.sets || []).find((k) => k.id === id);
+    if (!x) return;
+    state.setView = { pcx: true, exp: { name: x.name }, code: x.code, rows: x.rows, seen: x.seen };
+    state.setSel = new Set(x.rows.filter((r) => !r.owned).map((r) => r.key));
+    state.scrollTo = '.setview';
+    render();
+  }
+
+  function renderBrowse() {
+    const br = state.browse;
+    if (!br.open) return html`<div class="section"><button class="btn small" data-act="browse-open">Mes séries : voir les cartes qui me manquent</button></div>`;
+    const q = cm.norm(br.q);
+    const sets = (br.sets || []).filter((x) => x.owned > 0 && (br.jp || x.lang === 'FR') && (!q || cm.norm(x.name + ' ' + x.code).includes(q)));
+    const blocks = [];
+    for (const x of sets) {
+      let b = blocks.find((k) => k.name === x.block);
+      if (!b) blocks.push((b = { name: x.block, sets: [] }));
+      b.sets.push(x);
+    }
+    const tile = (x) => html`<button class="btn" data-act="browse-set" data-id="${x.id}" title="${x.name}" style="width:92px;padding:6px 4px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;line-height:1.2">
+      <img data-pcx src="${PCX_CDN}${x.code}.png" alt="" loading="lazy" referrerpolicy="no-referrer" style="width:34px;height:34px;object-fit:contain" />
+      <span style="max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.name}${x.lang === 'FR' ? '' : ' · ' + x.lang}</span>
+      <span style="color:${x.owned === x.rows.length ? '#1a8a3a' : '#c62828'};font-weight:600">${x.owned} / ${x.rows.length}</span>
+      <span class="muted" style="font-size:10px">${ago(x.seen)}</span></button>`;
+    return html`<div class="section browse">
+      <div class="section-head"><h3>Mes séries</h3><span><button class="btn link small" data-act="browse-refresh">Actualiser</button> · <button class="btn link small" data-act="browse-close">Fermer</button></span></div>
+      <button class="btn primary" data-act="pcx-refresh" style="width:100%;margin-bottom:2px">⟳ Actualiser ma collection Pokécardex</button>
+      <p class="help" style="margin-top:0">Seules les séries commencées sont relues. <button class="btn link small" data-act="pcx-refresh-all">Tout relire (long)</button> · <button class="btn link small" data-act="pcx-clear">Effacer les séries gardées</button></p>
+      ${br.scan ? html`<p class="help">${
+        br.scan.state === 'run' ? `Lecture en cours : ${br.scan.done} / ${br.scan.total} séries (${br.scan.code}). Laisse l’onglet Pokécardex ouvert et affiché.`
+        : br.scan.state === 'done' ? (br.scan.upToDate ? `Collection à jour (vérifiée ${ago(br.scan.t)}) : rien n’a changé sur Pokécardex.` : `Collection lue ${ago(br.scan.t)} : ${br.scan.read} séries relues, ${br.scan.skipped || 0} passées (vides ou inchangées).`)
+        : br.scan.state === 'stopped' ? `Lecture arrêtée ${ago(br.scan.t)} (${br.scan.done} / ${br.scan.total}).`
+        : `Lecture impossible : ${br.scan.note || ''}`}</p>` : ''}
+      ${br.sets && !br.sets.length
+        ? html`<p class="help">Aucune série lue pour l’instant : clique sur « Actualiser » (il faut être connecté à Pokécardex dans ce navigateur).</p>`
+        : html`<input type="search" data-model="browseQ" value="${br.q}" placeholder="Chercher une série…" style="width:100%;margin-bottom:6px" />`}
+      <div style="max-height:320px;overflow:auto">${blocks.map(
+        (b) => html`${b.name ? html`<p class="small muted" style="margin:6px 0 2px;font-weight:600">${b.name}</p>` : ''}<div style="display:flex;flex-wrap:wrap;gap:6px">${b.sets.map(tile)}</div>`
+      )}</div>
+      <p class="help"><label><input type="checkbox" data-act-change="browse-jp" ${attr(br.jp, 'checked')} /> Afficher aussi les séries japonaises</label></p>
+    </div>`;
+  }
+
+  function renderPcxSet(v) {
+    const missing = v.rows.filter((r) => !r.owned);
+    const sel = missing.filter((r) => state.setSel.has(r.key)).length;
+    return html`<div class="section setview">
+      <div class="section-head"><h3>${v.exp.name} : ${v.rows.length - missing.length} / ${v.rows.length} possédées</h3>
+        <button class="btn link small" data-act="set-close">Fermer</button></div>
+      <p class="help">Lu sur Pokécardex ${ago(v.seen)}.</p>
+      ${missing.length ? html`<p class="help">Rouge = manquante (clique pour l’écarter). Standard et reverse (« Rev. ») sont comptées à part. <button class="btn link small" data-act="set-all">${sel === missing.length ? 'Tout décocher' : 'Cocher toutes les manquantes'}</button></p>` : ''}
+      <div style="max-height:380px;overflow:auto;display:flex;flex-wrap:wrap;gap:6px">${v.rows.map((r) => {
+        const on = !r.owned && state.setSel.has(r.key);
+        const color = r.owned ? '#1a8a3a' : '#c62828';
+        return html`<button data-act="set-toggle" data-key="${r.key}" ${attr(r.owned, 'disabled')} title="${r.number} · ${r.name}${r.rev ? ' · reverse' : ''}${r.owned ? ' (possédée)' : ''}"
+          style="width:74px;padding:2px;border:3px solid ${color};border-radius:6px;background:#fff;color:#222;font:11px/1.2 system-ui,sans-serif;cursor:${r.owned ? 'default' : 'pointer'};opacity:${r.owned || on ? 1 : 0.45}">
+          ${r.image ? html`<img data-pcx src="${r.image}?class=md" alt="" loading="lazy" referrerpolicy="no-referrer" style="width:100%;display:block;border-radius:3px" />` : ''}
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span style="color:${color}">●</span> ${r.owned ? '' : on ? '☑ ' : '☐ '}${r.number}${r.rev ? ' · Rev.' : ''}</span>
+          <span style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.name}</span></button>`;
+      })}</div>
+      <button class="btn primary" style="margin-top:8px" data-act="set-add-selected" ${attr(!sel, 'disabled')}>${
+        missing.length ? `Ajouter les ${plural(sel, 'carte manquante', 'cartes manquantes')} à ma liste` : 'Série complète'
+      }</button>
+    </div>`;
+  }
+
   function renderList() {
     const cards = state.cards;
     const s = state.settings;
+    // Sur la page d'une série : elle s'affiche d'elle-même, une fois.
+    if (state.context.kind === 'set' && state.setAuto !== expId(state.context.exp) && !state.setLoad) {
+      state.setAuto = expId(state.context.exp);
+      setTimeout(() => loadSetView(state.context.exp), 0);
+    }
     const list = cards.length
       ? html`<div class="section">
           <div class="section-head"><h3>Ma liste (${cards.length})</h3><button class="btn link small" data-act="clear-list">Tout retirer</button></div>
@@ -1599,7 +1907,7 @@
           <ul class="cards box">${cards.map(renderCardRow)}</ul>
         </div>`
       : '';
-    return html`${renderListPicker()}${renderContextBanner()}${cards.length ? '' : renderHowTo()}${renderSearch()}${list}
+    return html`${renderListPicker()}${renderContextBanner()}${renderBrowse()}${renderSetView()}${cards.length ? '' : renderHowTo()}${renderSearch()}${list}
       <details class="section disclosure" data-details="bulk" ${attr(!!state.view.expanded.bulk || state.pending.length > 0 || !!state.bulk, 'open')}>
         <summary>Coller une liste de cartes</summary>
         <div class="spaced">
@@ -2668,6 +2976,72 @@
       case 'import-wants':
         importWants();
         break;
+      case 'add-set':
+        addSet();
+        break;
+      case 'set-toggle': {
+        const k = target.getAttribute('data-key');
+        if (state.setSel.has(k)) state.setSel.delete(k);
+        else state.setSel.add(k);
+        render();
+        break;
+      }
+      case 'set-all': {
+        const missing = state.setView ? state.setView.rows.filter((r) => !r.owned) : [];
+        const all = missing.every((r) => state.setSel.has(r.key));
+        state.setSel = new Set(all ? [] : missing.map((r) => r.key));
+        render();
+        break;
+      }
+      case 'set-add-selected':
+        addSetSelected();
+        break;
+      case 'set-reload':
+        if (state.setView) loadSetView(state.setView.exp);
+        break;
+      case 'set-close':
+        state.setView = null;
+        render();
+        break;
+      case 'browse-open':
+        if (target.classList.contains('add') && !(state.browse.scan && state.browse.scan.state === 'run' && Date.now() - state.browse.scan.t < 60000) && Date.now() - ((state.browse.scan && state.browse.scan.t) || 0) > 600000)
+          window.open('https://www.pokecardex.com/collection#cmr-scan', '_blank');
+        state.browse.open = true;
+        state.tab = 'list';
+        setOpen(true);
+        loadBrowse();
+        break;
+      case 'pcx-clear':
+        if (confirm('Effacer tout ce que le Regroupeur a lu sur Pokécardex ? (ta collection Pokécardex n’est pas touchée)')) {
+          state.setView = null;
+          chrome.storage.local.remove(['cmr.pokecardex', 'cmr.pcxSeries', 'cmr.pcxSeen', 'cmr.pcxDone', 'cmr.pcxScan'], loadBrowse);
+        }
+        break;
+      case 'pcx-refresh-all':
+        window.open('https://www.pokecardex.com/collection#cmr-scan-all', '_blank');
+        break;
+      case 'pcx-refresh':
+        window.open('https://www.pokecardex.com/collection#cmr-scan', '_blank');
+        break;
+      case 'browse-refresh':
+        loadBrowse();
+        break;
+      case 'browse-close':
+        state.browse.open = false;
+        render();
+        break;
+      case 'browse-set':
+        openPcxSet(target.getAttribute('data-id'));
+        break;
+      case 'undo-set':
+        if (state.setAdded) {
+          state.cards = state.cards.filter((c) => !state.setAdded.includes(c.id));
+          state.setAdded = null;
+          saveList();
+          recompute();
+          toast('Série retirée');
+        }
+        break;
       case 'remove': {
         const idx = state.cards.findIndex((c) => c.id === id);
         if (idx < 0) break;
@@ -2812,7 +3186,11 @@
 
   function onChange(e) {
     const el = e.target;
-    if (el.hasAttribute('data-setting')) onSettingChange(el);
+    if (el.getAttribute('data-act-change') === 'browse-jp') {
+      state.browse.jp = el.checked;
+      chrome.storage.local.set({ 'cmr.pcxJp': el.checked });
+      render();
+    } else if (el.hasAttribute('data-setting')) onSettingChange(el);
     else if (el.hasAttribute('data-card')) onCardChange(el);
     else if (el.hasAttribute('data-view')) {
       const k = el.getAttribute('data-view');
@@ -2849,6 +3227,11 @@
     else if (el.hasAttribute('data-exp-pick')) {
       const g = bulkGroup(el.getAttribute('data-exp-pick'));
       if (g) g.pickText = el.value;
+    }
+    else if (el.getAttribute('data-model') === 'browseQ') {
+      state.browse.q = el.value;
+      clearTimeout(viewTimer);
+      viewTimer = setTimeout(render, 250);
     }
     else if (el.getAttribute('data-view') === 'q') {
       state.view.q = el.value;
@@ -2911,6 +3294,17 @@
 
     shadow.addEventListener('click', onClick);
     shadow.addEventListener('change', onChange);
+    // Le lecteur Pokécardex avance dans un autre onglet : le menu « Mes séries » suit.
+    try {
+      chrome.storage.local.get('cmr.pcxScan', (d) => (state.browse.scan = (d && d['cmr.pcxScan']) || null));
+      chrome.storage.onChanged.addListener((ch) => {
+        if (!ch['cmr.pcxScan']) return;
+        state.browse.scan = ch['cmr.pcxScan'].newValue || null;
+        if (state.browse.open) loadBrowse();
+      });
+    } catch (e) {}
+    // Image Pokécardex refusée par la page (ou absente) : on la retire, le texte reste.
+    shadow.addEventListener('error', (e) => e.target && e.target.hasAttribute && e.target.hasAttribute('data-pcx') && e.target.remove(), true);
     shadow.addEventListener('input', onInput);
     shadow.addEventListener('toggle', onToggleDetails, true);
     shadow.addEventListener(
