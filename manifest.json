@@ -3,7 +3,7 @@
   "name": "Regroupeur — Cardmarket & Vinted",
   "short_name": "Regroupeur",
   "version": "1.8.3",
-  "description": "Cardmarket : regroupe tes achats chez le moins de vendeurs, cartes manquantes d’après Pokécardex. Vinted : recherche dans un dressing, lots, prix avec envoi, messages.",
+  "description": "Cardmarket : moins de vendeurs, cartes manquantes (Pokécardex). Vinted : recherche dressing, lots, prix avec envoi, messages.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
