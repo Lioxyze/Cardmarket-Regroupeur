@@ -261,6 +261,7 @@
     store.set(KEYS.ui, { open: state.open, wide: state.wide, tab: state.tab, interrupted: state.running || state.interrupted });
 
   function recompute() {
+    decoratePage();
     if (!state.dataset) {
       state.results = null;
       return;
@@ -295,6 +296,7 @@
   }
 
   function applyBadges() {
+    applyAddButtons();
     for (const el of document.querySelectorAll('[data-cmr-badge]')) el.remove();
     const r = state.results;
     const listKeys = new Set(state.cards.map((c) => c.key));
@@ -313,6 +315,44 @@
       // Stock d'un vendeur : cartes de ta liste
       const productLink = row.querySelector('.col-seller a[href*="/Products/"]');
       if (productLink && listKeys.has(cm.productKey(productLink.getAttribute('href')))) productLink.after(badge('✓ dans ta liste', true));
+    }
+  }
+
+  // Ajout direct depuis les résultats, les séries et le stock des vendeurs.
+  function applyAddButtons() {
+    const links = document.querySelectorAll('main a[href*="/Products/"], [id^="productRow"] a[href*="/Products/"], .article-row a[href*="/Products/"]');
+    const rows = new Set();
+    for (const link of links) {
+      const key = cm.productKey(link.getAttribute('href'));
+      if (!key || !link.textContent.trim()) continue;
+      const row = link.closest('[id^="productRow"], .article-row, [id^="wantRow"], tr') || link.parentElement;
+      if (rows.has(row)) continue;
+      rows.add(row);
+      const card = Object.assign({ key, name: link.textContent.trim() || nameFromKey(key) }, filtersFromUrl(link.href, key));
+      let button = row.querySelector('[data-cmr-add]');
+      if (!button) {
+        button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('data-cmr-add', '');
+        Object.assign(button.style, {
+          display: 'inline-block', marginLeft: '6px', padding: '3px 8px',
+          border: '1px solid #1f4fd1', borderRadius: '6px',
+          font: '600 12px/18px system-ui, sans-serif', verticalAlign: 'middle',
+          background: '#1f4fd1', color: '#fff', cursor: 'pointer',
+        });
+        link.after(button);
+      }
+      const added = state.cards.some((c) => analyzer.sameEntry(c, card, state.settings));
+      button.textContent = added ? '✓ Dans la liste' : '+ Ajouter à ma liste';
+      button.disabled = added;
+      button.style.opacity = added ? '0.7' : '1';
+      button.title = added ? 'Déjà dans la liste active du Regroupeur' : 'Ajouter à la liste active du Regroupeur';
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (addCard(card)) toast('Carte ajoutée à ta liste');
+        applyAddButtons();
+      };
     }
   }
 
@@ -3289,7 +3329,7 @@
     state.ready = true;
     // Nouvelles offres chargées par Cardmarket (« Afficher plus ») : on repose les repères.
     new MutationObserver((muts) => {
-      if (muts.some((m) => [...m.addedNodes].some((n) => n.nodeType === 1 && (n.matches('.article-row') || n.querySelector('.article-row'))))) decoratePage();
+      if (muts.some((m) => [...m.addedNodes].some((n) => n.nodeType === 1 && !n.matches('[data-cmr-add], [data-cmr-badge]') && (n.matches('.article-row, [id^="productRow"], a[href*="/Products/"]') || n.querySelector('.article-row, [id^="productRow"], a[href*="/Products/"]'))))) decoratePage();
     }).observe(document.body, { childList: true, subtree: true });
 
     shadow.addEventListener('click', onClick);
